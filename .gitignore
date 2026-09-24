@@ -1,0 +1,42 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# next.js
+.next/
+out/
+build/
+next-env.d.ts
+
+# production
+dist/
+
+# environment & secrets
+.env
+.env*.local
+.env.example.local
+
+# database (SQLite runtime data)
+db/
+prisma/db/
+*.db
+*.db-journal
+
+# logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# misc
+.DS_Store
+*.pem
+tsconfig.tsbuildinfo
+.vercel
+*.tsbuildinfo
+
+# pboss / process manager
+.pboss/

@@ -186,7 +186,10 @@ export interface Goodie {
 
 export interface ActiveBuff {
   type: GoodieType;
-  expiresAt: number;
+  /** Remaining buff time in seconds, decremented by SIMULATED dt so a
+   *  pause freezes it (a wall-clock expiry used to eat the buff while the
+   *  game sat in the pause menu / a background tab). Re-collecting the same
+   *  goodie resets it to the fresh duration (no stacking). */
   duration: number;
 }
 

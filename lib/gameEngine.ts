@@ -161,6 +161,10 @@ export class GameEngine {
   public runGemsEarned: number = 0;
   public runKills: number = 0;
   public runBossesDefeated: number = 0;
+  /** Run-total snapshots taken at wave start so onWaveComplete can report
+   *  true per-wave deltas (the callback contract) instead of run totals. */
+  private waveStartCash: number = 0;
+  private waveStartKills: number = 0;
 
   // Player & Base stats
   public maxBaseHp: number = 100;
@@ -910,6 +914,13 @@ export class GameEngine {
   }
 
   public revivePlayer() {
+    // Re-entry guard: a double invoke (gem-revive racing the ad-revive path)
+    // would queue a SECOND requestAnimationFrame chain — two loops running
+    // means double dt integration, double spawns and double economy events.
+    if (this.isRunning && this.animFrameId) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = 0;
+    }
     this.currentBaseHp = Math.round(this.maxBaseHp * 0.6);
     this.currentShieldHp = 50;
     this.isRunning = true;
@@ -917,6 +928,12 @@ export class GameEngine {
     this.threats = []; // clear immediate board for safety
     this.poolAllProjectiles();
     this.projectiles = [];
+    // The dead flagship is gone with the cleared board — drop the stale
+    // reference too, or the !activeBoss spawn gate would block the boss
+    // from ever (re)spawning for the rest of the wave AND the HUD would
+    // keep rendering a health bar for a boss that no longer exists.
+    this.activeBoss = null;
+    this.callbacks.onBossEncounter(null);
     this.triggerNuke();
     this.addFloatingText('REVIVED! SHIELD ONLINE', this.L_WIDTH / 2, this.L_HEIGHT / 2, '#38bdf8', 1.5);
     this.broadcastState();
@@ -959,6 +976,9 @@ export class GameEngine {
   public setupWave(waveNumber: number) {
     this.currentWave = waveNumber;
     this.callbacks.onWaveChange?.(waveNumber);
+    // Per-wave delta baselines (see onWaveComplete)
+    this.waveStartCash = this.runCashEarned;
+    this.waveStartKills = this.runKills;
 
     // ---------------------------------------------------------------------
     // BOSS RUSH — every stage is a Dreadnought climax. Stage n pits the
@@ -1657,9 +1677,12 @@ export class GameEngine {
     if (this.specialCooldowns.orbital > 0) this.specialCooldowns.orbital = Math.max(0, this.specialCooldowns.orbital - dt);
     if (this.specialCooldowns.grenade > 0) this.specialCooldowns.grenade = Math.max(0, this.specialCooldowns.grenade - dt);
 
-    // Active Buffs — expiry sweep (tiny Map, ≤5 entries)
+    // Active Buffs — countdown sweep in SIMULATED seconds (tiny Map, ≤5 entries).
+    // Simulated dt means a pause freezes the remaining buff time — the old
+    // wall-clock expiry silently ate buffs while the game sat paused.
     this.activeBuffs.forEach((buff, type) => {
-      if (timeSec >= buff.expiresAt) {
+      buff.duration -= dt;
+      if (buff.duration <= 0) {
         this.activeBuffs.delete(type);
         this.buffsDirty = true;
       }
@@ -1675,7 +1698,7 @@ export class GameEngine {
       this.buffsDirty = false;
       this.buffsSigTimer = 0;
       const buffs = Array.from(this.activeBuffs.values());
-      const buffsSignature = buffs.map((b) => `${b.type}:${Math.ceil(b.expiresAt)}`).join('|');
+      const buffsSignature = buffs.map((b) => `${b.type}:${Math.ceil(b.duration)}`).join('|');
       if (buffsSignature !== this.lastBuffsSignature) {
         this.lastBuffsSignature = buffsSignature;
         this.callbacks.onBuffsUpdate(buffs);
@@ -2356,9 +2379,13 @@ export class GameEngine {
             g.x += (dx / dist) * 110 * dt;
             g.y += (dy / dist) * 110 * dt;
             if (dist < t.radius + g.radius) {
-              // Stolen!
+              // Stolen! Remove the goodie HERE — teleporting it below the
+              // defense line made updateGoodies() auto-collect it for the
+              // player the very same frame (a steal that gifts the reward).
               this.addFloatingText('GOODIE STOLEN!', t.x, t.y, '#f87171', 1.0);
-              g.y = this.L_HEIGHT + 100; // remove
+              this.goodies[mi] = this.goodies[this.goodies.length - 1];
+              this.goodies.pop();
+              mi--; // re-check the goodie swapped into this slot
             }
           }
         }
@@ -2559,7 +2586,11 @@ export class GameEngine {
         // Intercept during the charge (easy) or during flight (a snap-shot).
         if (t.y < 36) {
           t.vy = 34; // approach the firing altitude
-        } else {
+        } else if (t.vy < 100) {
+          // Holding the bore line & charging — ONE-SHOT latch: once the dart
+          // has fired (vy jumps to ~700), never re-enter this branch, or the
+          // shot sound / floating text / haptic would re-fire every frame for
+          // the whole flight.
           t.vy = 0; // hold the bore line
           t.specialTimer = (t.specialTimer ?? 0) + dt; // charge only at altitude
           if ((t.specialTimer ?? 0) >= 0.9) {
@@ -2569,6 +2600,7 @@ export class GameEngine {
             haptics.tap();
           }
         }
+        // In flight (vy >= 100): pure hypervelocity descent — no re-charge.
         // Ionized bore streak while the dart is in flight
         if (t.vy > 100 && Math.random() < 0.9) {
           this.spawnParticle({
@@ -3728,13 +3760,22 @@ export class GameEngine {
       if (t.type === 'fake_goodie') {
         // Deception also drains FUNDS (the scammer siphons the defense budget).
         const penalty = Math.min(250, 40 + this.currentWave * 6);
+        const before = this.runCashEarned;
         this.runCashEarned = Math.max(0, this.runCashEarned - penalty);
-        this.callbacks.onCashUpdate(-penalty, this.runCashEarned);
+        // Report the ACTUAL deduction, not the nominal penalty: the shell
+        // applies this delta straight to the player's banked cash, and the
+        // unclamped value drained the wallet while the run-cash HUD/stat
+        // (also clamped at 0) claimed nothing happened — displayed earnings
+        // and the real wallet change permanently diverged.
+        const siphoned = before - this.runCashEarned;
+        if (siphoned > 0) {
+          this.callbacks.onCashUpdate(-siphoned, this.runCashEarned);
+          this.addFloatingText(`-$${siphoned} FUNDS SIPHONED`, t.x, t.y + 14, '#ef4444', 1.1);
+        }
         haptics.violent();
         this.resetCombo();
         this.spawnStarfallCatastrophe(t.x, t.y);
         this.addFloatingText('✶ DECEPTION CORE — STARFALL! ✶', t.x, t.y - 16, '#fb923c', 1.4);
-        this.addFloatingText(`-$${penalty} FUNDS SIPHONED`, t.x, t.y + 14, '#ef4444', 1.1);
         return;
       }
 
@@ -5224,8 +5265,6 @@ export class GameEngine {
     haptics.light();
     this.createShockwave(g.x, g.y, g.color, 45);
 
-    const now = performance.now() / 1000;
-
     switch (g.type) {
       case 'cash_orb': {
         // Orb payout rebalanced (was 100-250 — part of the over-generous economy)
@@ -5244,7 +5283,6 @@ export class GameEngine {
       case 'fire_rate': {
         this.activeBuffs.set('fire_rate', {
           type: 'fire_rate',
-          expiresAt: now + g.duration,
           duration: g.duration,
         });
         this.buffsDirty = true;
@@ -5262,7 +5300,6 @@ export class GameEngine {
       case 'auto_aim': {
         this.activeBuffs.set('auto_aim', {
           type: 'auto_aim',
-          expiresAt: now + g.duration,
           duration: g.duration,
         });
         this.buffsDirty = true;
@@ -5272,7 +5309,6 @@ export class GameEngine {
       case 'slow_mo': {
         this.activeBuffs.set('slow_mo', {
           type: 'slow_mo',
-          expiresAt: now + g.duration,
           duration: g.duration,
         });
         this.buffsDirty = true;
@@ -5559,8 +5595,10 @@ export class GameEngine {
     }
 
     this.callbacks.onWaveComplete(this.currentWave, {
-      cashEarned: this.runCashEarned,
-      kills: this.runKills,
+      // Per-wave DELTAS (the callback contract): the run totals were being
+      // reported here, so GA's per-wave kills/cash_earned grew every wave.
+      cashEarned: this.runCashEarned - this.waveStartCash,
+      kills: this.runKills - this.waveStartKills,
     });
   }
 

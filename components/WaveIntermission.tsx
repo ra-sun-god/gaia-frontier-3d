@@ -37,6 +37,10 @@ interface WaveIntermissionProps {
   adrenalineGainSteps: number;
   onBuyAdrenalineRefill: () => void;
   onStartNextWave: () => void;
+  /** Hold the auto-deploy countdown while the sim is paused or another modal
+   *  owns the screen — otherwise the wave silently auto-deploys behind the
+   *  PauseModal (or while the tab is hidden) and steals the shopping window. */
+  frozen?: boolean;
 }
 
 export const WaveIntermission: React.FC<WaveIntermissionProps> = ({
@@ -58,6 +62,7 @@ export const WaveIntermission: React.FC<WaveIntermissionProps> = ({
   adrenalineGainSteps,
   onBuyAdrenalineRefill,
   onStartNextWave,
+  frozen = false,
 }) => {
   const [countdown, setCountdown] = useState(8);
   const repairCost = 75;
@@ -110,8 +115,11 @@ export const WaveIntermission: React.FC<WaveIntermissionProps> = ({
     else if (kind === 'grenade') onBuySpecialCharge('grenade');
   };
 
-  // Auto deploy timer if user is AFK
+  // Auto deploy timer if user is AFK — FROZEN while paused / another modal
+  // is open: the countdown must not tick (and must not fire the auto-deploy)
+  // behind the PauseModal or while the tab is hidden.
   useEffect(() => {
+    if (frozen) return;
     if (countdown <= 0) {
       startNextWaveRef.current();
       return;
@@ -120,7 +128,7 @@ export const WaveIntermission: React.FC<WaveIntermissionProps> = ({
       setCountdown((prev) => prev - 1);
     }, 1000);
     return () => clearInterval(timer);
-  }, [countdown]);
+  }, [countdown, frozen]);
 
   return (
     <div

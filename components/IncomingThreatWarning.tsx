@@ -29,6 +29,11 @@ export const IncomingThreatWarning: React.FC<IncomingThreatWarningProps> = ({
   const [isVisible, setIsVisible] = useState(false);
   const [progress, setProgress] = useState(100);
   const onDismissRef = useRef(onDismiss);
+  // Trailing dismiss timer (the slide-out animation delay). It MUST be
+  // tracked and cleared: if a new boss warning replaces this one within the
+  // 350ms window, the stale timer would fire onDismiss() and instantly kill
+  // the NEW warning card.
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     onDismissRef.current = onDismiss;
@@ -66,7 +71,8 @@ export const IncomingThreatWarning: React.FC<IncomingThreatWarningProps> = ({
     // Slide-out and dismiss
     const timerOut = setTimeout(() => {
       setIsVisible(false);
-      setTimeout(() => {
+      dismissTimerRef.current = setTimeout(() => {
+        dismissTimerRef.current = null;
         onDismissRef.current();
       }, 350); // Allow slide-up animation to complete
     }, duration);
@@ -75,6 +81,10 @@ export const IncomingThreatWarning: React.FC<IncomingThreatWarningProps> = ({
       clearTimeout(timerIn);
       clearTimeout(timerOut);
       clearInterval(interval);
+      if (dismissTimerRef.current !== null) {
+        clearTimeout(dismissTimerRef.current);
+        dismissTimerRef.current = null;
+      }
     };
   }, [boss]);
 
@@ -86,8 +96,16 @@ export const IncomingThreatWarning: React.FC<IncomingThreatWarningProps> = ({
   const handleManualDismiss = () => {
     sound.playUiClick();
     setIsVisible(false);
-    setTimeout(() => {
-      onDismiss();
+    // Cancel any pending auto-dismiss path first — manual wins, and a fresh
+    // boss warning may have already replaced this card by the time the
+    // animation delay elapses.
+    if (dismissTimerRef.current !== null) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
+    dismissTimerRef.current = setTimeout(() => {
+      dismissTimerRef.current = null;
+      onDismissRef.current();
     }, 300);
   };
 

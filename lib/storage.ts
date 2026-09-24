@@ -11,9 +11,16 @@ export function getTodayDayStamp(): number {
   return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
 }
 
-/** Day stamp of the 24h BEFORE `stamp` (streak continuation window). */
+/** Day stamp of the 24h BEFORE `stamp` (streak continuation window).
+ *  NOTE: `new Date(y, m, d-1)` — both month and day are decremented because
+ *  Date's monthIndex is 0-based while the stamp's month is 1-based, and day
+ *  0 / month underflow roll over to the previous calendar month/year. */
 function previousDayStamp(stamp: number): number {
-  const d = new Date(Math.floor(stamp / 10000), Math.floor((stamp % 10000) / 100) - 1, stamp % 100);
+  const d = new Date(
+    Math.floor(stamp / 10000),
+    Math.floor((stamp % 10000) / 100) - 1,
+    (stamp % 100) - 1
+  );
   return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
 }
 
@@ -580,7 +587,7 @@ export const DAILY_CHALLENGES_DATA: DailyChallenge[] = [
   {
     id: 'ch_survive',
     title: 'Terran Aegis',
-    description: 'Survive to Wave 6 or beyond in a single run',
+    description: 'Clear 6 waves today — progress carries across runs',
     target: 6,
     current: 0,
     completed: false,
@@ -659,6 +666,13 @@ export function getStoredProfile(): PlayerProfile {
       lastBossRushDay: Math.max(0, Math.floor(safeNum(parsed.lastBossRushDay, 0))),
       bossRushBestStage: Math.max(0, Math.floor(safeNum(parsed.bossRushBestStage, 0))),
       endlessBestWave: Math.max(0, Math.floor(safeNum(parsed.endlessBestWave, 0))),
+      // Idle harvester: a zero/missing stamp means "never ran" — starting the
+      // accrual clock NOW (and persisting it with the next profile save).
+      // The old `lastClaimAt || now` read-side fallback reset the window on
+      // every page load, so the harvest was always empty for players who
+      // had never claimed.
+      lastIdleCollectedAt:
+        safeNum(parsed.lastIdleCollectedAt, 0) > 0 ? parsed.lastIdleCollectedAt : Date.now(),
       storyIntroSeen: Boolean(parsed.storyIntroSeen),
       adrenalineGainSteps: Math.max(
         0,
@@ -682,16 +696,33 @@ export function saveProfile(profile: PlayerProfile): void {
   }
 }
 
+/** Shape persisted for the daily-challenges board. `day` is a YYYYMMDD
+ *  stamp — when it no longer matches today the board resets to fresh
+ *  quests (that is the entire point of "daily" challenges). */
+interface DailyChallengesBlob {
+  day: number;
+  list: DailyChallenge[];
+}
+
 export function getDailyChallenges(): DailyChallenge[] {
   if (typeof window === 'undefined') return DAILY_CHALLENGES_DATA;
+  const today = getTodayDayStamp();
   try {
     const raw = localStorage.getItem('earth_defender_challenges');
     if (!raw) return DAILY_CHALLENGES_DATA;
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return DAILY_CHALLENGES_DATA;
-    // Merge against canonical definitions so renamed/new quests stay valid
+    // Legacy format (a plain array, pre-day-stamp): those boards never reset,
+    // so their progress accumulated across many days — treat as expired and
+    // start today fresh.
+    if (Array.isArray(parsed)) return DAILY_CHALLENGES_DATA;
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.list)) {
+      return DAILY_CHALLENGES_DATA;
+    }
+    // New day → fresh board. Same day → merge saved progress against the
+    // canonical definitions so renamed/new quests stay valid.
+    if (parsed.day !== today) return DAILY_CHALLENGES_DATA;
     return DAILY_CHALLENGES_DATA.map((def) => {
-      const saved = parsed.find((c: DailyChallenge) => c && c.id === def.id);
+      const saved = parsed.list.find((c: DailyChallenge) => c && c.id === def.id);
       if (!saved || typeof saved !== 'object') return { ...def };
       return {
         ...def,
@@ -710,7 +741,8 @@ export function getDailyChallenges(): DailyChallenge[] {
 export function saveDailyChallenges(challenges: DailyChallenge[]): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem('earth_defender_challenges', JSON.stringify(challenges));
+    const blob: DailyChallengesBlob = { day: getTodayDayStamp(), list: challenges };
+    localStorage.setItem('earth_defender_challenges', JSON.stringify(blob));
   } catch {}
 }
 

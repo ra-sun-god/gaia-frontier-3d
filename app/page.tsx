@@ -225,6 +225,8 @@ export default function GaiaFrontierPage() {
   // (they must read current values through refs, not stale closures)
   const hasStartedRef = useRef(false);
   const isGameOverRef = useRef(false);
+  const isIntermissionRef = useRef(false);
+  const isPausedRef = useRef(false);
   const profileRef = useRef<PlayerProfile>(DEFAULT_PROFILE);
   // GA telemetry run-scoped refs: engine callbacks are created once per run
   // (stale-closure risk for React state), so live wave/era/startTime live in
@@ -302,6 +304,25 @@ export default function GaiaFrontierPage() {
       })();
     }, 0);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Day-rollover refresh — a player leaving the tab open across local
+  // midnight must not keep staring at yesterday's "STREAK SECURED — RETURN
+  // TOMORROW" card (and yesterday's fully-claimed challenge board) until a
+  // reload. Cheap 30s poll; does nothing unless the calendar day actually
+  // changed. Never touches the live profile (mid-run progress is safe).
+  useEffect(() => {
+    let lastDay = getTodayDayStamp();
+    const timer = setInterval(() => {
+      const today = getTodayDayStamp();
+      if (today === lastDay) return;
+      lastDay = today;
+      const stored = getStoredProfile();
+      setStreakPreview(previewDailyStreak(stored));
+      setStreakJustClaimed(false);
+      setChallenges(getDailyChallenges());
+    }, 30_000);
+    return () => clearInterval(timer);
   }, []);
 
   // Game Engine & Real-time gameplay state
@@ -423,7 +444,21 @@ export default function GaiaFrontierPage() {
   useEffect(() => {
     hasStartedRef.current = hasStarted;
     isGameOverRef.current = isGameOver;
-  }, [hasStarted, isGameOver]);
+    isIntermissionRef.current = isIntermission;
+    isPausedRef.current = isPaused;
+  }, [hasStarted, isGameOver, isIntermission, isPaused]);
+
+  // The post-ad auto-resume timer must never outlive an explicit pause: an
+  // impatient double-tap on the pause button during the ad's 800ms grace
+  // window used to leave the timer armed — it then fired engine.resume()
+  // and combat ran LIVE behind the PAUSED modal.
+  const postAdResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (isPaused && postAdResumeTimerRef.current !== null) {
+      clearTimeout(postAdResumeTimerRef.current);
+      postAdResumeTimerRef.current = null;
+    }
+  }, [isPaused]);
 
   // Cloud status badge + reconciliation when the server rejects a late push
   useEffect(() => {
@@ -583,11 +618,19 @@ export default function GaiaFrontierPage() {
     } finally {
       setIsAdOfferPlaying(false);
       setAdOffer(null);
-      // Hand control back — a fresh 1s grace keeps the return from being unfair
+      // Hand control back — a fresh 1s grace keeps the return from being unfair.
+      // State-aware: if the player explicitly PAUSED during the grace window,
+      // cancel the auto-resume (never fight the user, never run combat behind
+      // the PauseModal).
       const e = engineRef.current;
       if (e && e.isRunning && e.isPaused && !isPaused) {
-        setTimeout(() => {
-          if (engineRef.current?.isPaused) engineRef.current.resume();
+        if (postAdResumeTimerRef.current !== null) clearTimeout(postAdResumeTimerRef.current);
+        postAdResumeTimerRef.current = setTimeout(() => {
+          postAdResumeTimerRef.current = null;
+          const eng = engineRef.current;
+          if (eng && eng.isRunning && eng.isPaused && !isPausedRef.current) {
+            eng.resume();
+          }
         }, 800);
       }
     }
@@ -622,7 +665,16 @@ export default function GaiaFrontierPage() {
       onPause: () => {
         cloudSync.flush();
         const eng = engineRef.current;
-        if (eng && hasStartedRef.current && !isGameOverRef.current && !eng.isPaused) {
+        // During intermission there is no live combat to freeze — pausing
+        // here would stack the PauseModal on top of the intermission card
+        // while its auto-deploy countdown kept ticking into the next wave.
+        if (
+          eng &&
+          hasStartedRef.current &&
+          !isGameOverRef.current &&
+          !isIntermissionRef.current &&
+          !eng.isPaused
+        ) {
           eng.pause();
           setIsPaused(true);
         }
@@ -742,7 +794,9 @@ export default function GaiaFrontierPage() {
         },
         onWaveComplete: (wave, waveStats) => {
           setIsIntermission(true);
-          trackChallengeProgress('survive_waves', wave);
+          // +1 per cleared wave (target 6): the old `+wave` increment summed
+          // wave NUMBERS (1+2+3 = 6) so the quest completed after wave 3.
+          trackChallengeProgress('survive_waves', 1);
           // GA: wave cleared with the run's context — the core progression event.
           trackWaveComplete(wave, liveEraRef.current?.eraNumber ?? 1, liveEraRef.current?.name ?? '', mode, {
             kills: waveStats.kills,
@@ -787,7 +841,9 @@ export default function GaiaFrontierPage() {
             gemsEarned: stats.gemsEarned,
             cashEarned: stats.cashEarned,
             mode,
-            newHighScore: stats.score > profile.highScore,
+            // profileRef, not the run-start closure: on die→revive→die runs
+            // the stale snapshot overcounted record runs in GA.
+            newHighScore: stats.score > profileRef.current.highScore,
           });
           // Run over: stand the soundtrack down from combat intensity
           sound.resetCombatDrive();
@@ -2013,6 +2069,7 @@ export default function GaiaFrontierPage() {
             onBuyAdrenalineStim={handleBuyAdrenalineStim}
             onBuyAdrenalineRefill={handleBuyAdrenalineRefill}
             onStartNextWave={handleStartNextWave}
+            frozen={isPaused || activeModal !== 'none'}
           />
         )}
 

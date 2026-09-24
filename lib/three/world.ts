@@ -238,7 +238,11 @@ export class ThreeWorld {
       const positions = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
         const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(Math.random() * 1.6 - 0.2); // biased to the sky
+        // Sky-biased sphere sampling: uniform cos(phi) on [-0.2, 1.0]. The
+        // old `* 1.6 - 0.2` range exceeded Math.acos's [-1, 1] domain for
+        // ~25% of stars — every one of those became a NaN position attribute
+        // (console: "Computed radius is NaN") and silently vanished.
+        const phi = Math.acos(Math.random() * 1.2 - 0.2);
         positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
         positions[i * 3 + 1] = Math.abs(radius * Math.cos(phi)) * 0.6 + 60;
         positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
@@ -474,20 +478,37 @@ export class ThreeWorld {
 
   resetPools() {
     for (const map of [this.threatMeshes, this.goodieMeshes, this.projectileMeshes]) {
-      for (const m of map.values()) this.scene.remove(m);
+      for (const m of map.values()) this.destroy(m);
       map.clear();
     }
-    for (const m of this.hazardMeshes.values()) this.scene.remove(m);
+    for (const m of this.hazardMeshes.values()) this.destroy(m);
     this.hazardMeshes.clear();
   }
 
   private releaseStale(map: Map<number, THREE.Group | THREE.Mesh>, seen: Set<number>) {
     for (const [id, mesh] of map) {
       if (!seen.has(id)) {
-        this.scene.remove(mesh);
+        this.destroy(mesh);
         map.delete(id);
       }
     }
+  }
+
+  /** Removes an entity mesh from the scene AND frees its GPU-side
+   *  geometry/material allocations. Every mesh is built from fresh
+   *  geometries/materials (only the glow/icon textures are shared and cached),
+   * so a bare scene.remove() leaks WebGL buffers for every retired entity —
+   * at auto-fire cadence a 10-minute run leaked thousands of them.
+   *  (material.dispose() does NOT dispose shared textures — safe.) */
+  private destroy(obj: THREE.Object3D) {
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+      else mat?.dispose();
+    });
+    this.scene.remove(obj);
   }
 
   // -------------------------------------------------------------------------
@@ -562,7 +583,7 @@ export class ThreeWorld {
 
   private syncTurret(state: WorldState) {
     if (!this.turretGroup || this.turretColor !== state.skinColors.cannon) {
-      if (this.turretGroup) this.scene.remove(this.turretGroup);
+      if (this.turretGroup) this.destroy(this.turretGroup);
       const built = buildTurret(state.skinColors.cannon);
       this.turretGroup = built.group;
       this.turretBarrel = built.barrel;
@@ -593,7 +614,7 @@ export class ThreeWorld {
       seen.add(t.id);
       let mesh = this.threatMeshes.get(t.id);
       if (!mesh || mesh.userData.builtType !== t.type) {
-        if (mesh) this.scene.remove(mesh);
+        if (mesh) this.destroy(mesh);
         mesh = buildThreatMesh(t);
         this.threatMeshes.set(t.id, mesh);
         this.scene.add(mesh);
