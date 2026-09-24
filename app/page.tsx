@@ -1768,11 +1768,14 @@ export default function GaiaFrontierPage() {
           <IncomingThreatWarning boss={bossWarning} onDismiss={() => setBossWarning(null)} />
         )}
 
-        {/* --- Landing / Main Menu Screen (Matching Screen 2 in Reference) --- */}
+        {/* --- Landing / Main Menu Screen (Matching Screen 2 in Reference) ---
+            Semi-transparent: the 3D battlefield (Earth limb, defense grid,
+            drifting stars) stays alive behind the menu instead of a flat
+            gradient, with backdrop blur keeping the UI readable. */}
         {!hasStarted && (
           <div
             id="main-menu-overlay"
-            className="absolute inset-0 z-30 flex flex-col justify-between bg-gradient-to-b from-[#020a17] via-[#081b3b] to-[#040f24] backdrop-blur-md select-none overflow-hidden [@media(max-height:500px)]:overflow-y-auto"
+            className="absolute inset-0 z-30 flex flex-col justify-between bg-gradient-to-b from-[#020a17e8] via-[#081b3bc0] to-[#040f24e8] backdrop-blur-md select-none overflow-hidden [@media(max-height:500px)]:overflow-y-auto"
           >
             {/* Top Status Bar (Profile, Rank, Online 10, Settings) */}
             <EarthTopBar

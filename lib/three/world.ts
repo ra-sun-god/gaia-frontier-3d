@@ -9,7 +9,17 @@
 //   world.z = L_HEIGHT/2 - logical.y
 //   entities live on the gameplay plane y = PLAY_Y (bobbing ±small),
 //   pointer input is ray-cast against that same plane (screenToLogical).
+//
+// Scene concept — "the last orbital battery over Earth":
+//   a holographic defense-grid corridor floats above the planet; the hero
+//   railcannon and the Gaia citadel sit on its near deck, and incoming waves
+//   descend from deep space toward Earth's glowing limb at the far horizon.
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { buildEarth, buildFlareStars, buildNebula, buildStarShells, buildSun, EarthGroup } from './earth';
 import { EraInfo, FloatingText, Goodie, GroundHazard, Particle, Projectile, Threat } from '../types';
 import {
   buildGoodieMesh,
@@ -17,6 +27,7 @@ import {
   buildStarfallComet,
   buildThreatMesh,
   buildTurret,
+  glowSprite,
 } from './enemyMeshes';
 
 const PLAY_Y = 42;
@@ -103,15 +114,30 @@ export class ThreeWorld {
   private camTarget = new THREE.Vector3(0, PLAY_Y * 0.35, 0);
   private aimLean = 0;
 
+  // Post pipeline
+  private composer!: EffectComposer;
+  private bloomPass!: UnrealBloomPass;
+  private bloomOn = true;
+
   // World furniture
-  private ground!: THREE.Mesh;
-  private grid!: THREE.GridHelper;
-  private basePlatform!: THREE.Mesh;
-  private baseDome!: THREE.Mesh;
+  private corridor!: THREE.Mesh;
+  private corridorMat!: THREE.ShaderMaterial;
+  private platformGroup!: THREE.Group;
+  private baseSpire!: THREE.Mesh;
   private shieldDome!: THREE.Mesh;
+  private shieldMat!: THREE.ShaderMaterial;
+  private nebula!: THREE.Mesh;
+  private sun!: THREE.Group;
   private stars: THREE.Points[] = [];
   private keyLight!: THREE.DirectionalLight;
   private hemiLight!: THREE.HemisphereLight;
+  private muzzleLight!: THREE.PointLight;
+  private platformFlood!: THREE.PointLight;
+
+  // Earth
+  private earth: EarthGroup | null = null;
+  private earthTextures: THREE.Texture[] = [];
+  private EARTH_R = 2400;
 
   // Turret
   private turretGroup: THREE.Group | null = null;
@@ -143,7 +169,10 @@ export class ThreeWorld {
   private lastDrivenAt = 0;
   private lastEra = -1;
   private idleRaf = 0;
+  private idleLast = 0;
   private disposed = false;
+  private vignetteKey = '';
+  private vignetteGrad: CanvasGradient | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -153,14 +182,25 @@ export class ThreeWorld {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.toneMappingExposure = 1.08;
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 10, 6000);
+    this.camera = new THREE.PerspectiveCamera(42, 1, 10, 12000);
     this.scene.fog = new THREE.Fog('#050b14', 500, 2600);
+
+    // HDR post pipeline: scene → UnrealBloom → ACES/sRGB output. The MSAA
+    // render target keeps edges clean now that the canvas is no longer the
+    // direct render surface.
+    const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+    this.composer = new EffectComposer(this.renderer, rt);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.44, 0.5, 0.9);
+    this.composer.addPass(this.bloomPass);
+    this.composer.addPass(new OutputPass());
 
     this.buildWorld();
     this.buildParticles();
     this.buildTelegraphs();
+    this.fitCamera();
     this.layoutFurniture();
     this.startIdleLoop();
   }
@@ -170,100 +210,211 @@ export class ThreeWorld {
   // -------------------------------------------------------------------------
 
   private buildWorld() {
-    this.hemiLight = new THREE.HemisphereLight('#7dd3fc', '#0b1220', 1.05);
+    // Lighting: warm key from the distant sun (upper-left, matches the sun
+    // sprite), cyan earthshine bounce from the planet below, soft sky fill.
+    this.hemiLight = new THREE.HemisphereLight('#7dd3fc', '#0b1220', 0.85);
     this.scene.add(this.hemiLight);
-    this.keyLight = new THREE.DirectionalLight('#e2e8f0', 1.9);
-    this.keyLight.position.set(-360, 900, -520);
+    // The sun stays warm-white year-round: the planet must read as a bright
+    // "Blue Marble". (It used to inherit the era's ambientGlow — a dark
+    // saturated blue that drowned the whole disk during gameplay.)
+    this.keyLight = new THREE.DirectionalLight('#fff3e0', 2.4);
+    this.keyLight.position.set(-2300, 1900, 2900);
     this.scene.add(this.keyLight);
-    const rim = new THREE.DirectionalLight('#38bdf8', 0.7);
-    rim.position.set(520, 380, 700);
-    this.scene.add(rim);
+    // Camera-side photographic fill so the visible disk never goes pitch
+    // dark regardless of which longitude rotates into view.
+    const earthFill = new THREE.DirectionalLight('#a8c8ff', 0.6);
+    earthFill.position.set(400, 1500, -900);
+    this.scene.add(earthFill);
+    const earthshine = new THREE.DirectionalLight('#38bdf8', 0.45);
+    earthshine.position.set(150, -900, 400);
+    this.scene.add(earthshine);
 
-    this.ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(3200, 3200),
-      new THREE.MeshStandardMaterial({ color: '#0a1220', roughness: 1, metalness: 0 })
-    );
-    this.ground.rotation.x = -Math.PI / 2;
-    this.ground.position.y = -1;
-    this.scene.add(this.ground);
+    // Deep-space dressing. Every material here opts out of scene fog — the
+    // battlefield fog band (500–2600) used to swallow the entire starfield,
+    // leaving an empty void sky.
+    this.nebula = buildNebula(4400);
+    this.scene.add(this.nebula);
+    this.stars = buildStarShells();
+    for (const s of this.stars) this.scene.add(s);
+    this.scene.add(buildFlareStars());
+    this.sun = buildSun();
+    this.scene.add(this.sun);
 
-    this.grid = new THREE.GridHelper(2400, 40, '#16324f', '#10233a');
-    this.grid.position.y = 0.2;
-    const gridMat = this.grid.material as THREE.Material;
-    gridMat.transparent = true;
-    gridMat.opacity = 0.5;
-    this.scene.add(this.grid);
+    // Holographic defense-grid corridor (replaces the old GridHelper floor).
+    this.corridorMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      uniforms: {
+        uTint: { value: new THREE.Color('#67e8f9') },
+        uTime: { value: 0 },
+        uSize: { value: new THREE.Vector2(630, 1120) },
+        uPlay: { value: new THREE.Vector2(450, 800) },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        uniform vec3 uTint;
+        uniform float uTime;
+        uniform vec2 uSize;
+        uniform vec2 uPlay;
+        varying vec2 vUv;
+        void main() {
+          vec2 p = (vUv - 0.5) * uSize;
+          // minor 56u grid + major 280u grid
+          vec2 g1 = abs(fract(p / 56.0) - 0.5);
+          float minor = 1.0 - smoothstep(0.0, 0.06, min(g1.x, g1.y));
+          vec2 g2 = abs(fract(p / 280.0) - 0.5);
+          float major = 1.0 - smoothstep(0.0, 0.022, min(g2.x, g2.y));
+          // fade to nothing beyond the playfield rect
+          vec2 q = abs(p) - uPlay * 0.5;
+          float fade = 1.0 - smoothstep(0.0, uPlay.x * 0.42, max(q.x, q.y));
+          // corridor boundary rails at the playfield edges (subtle hint —
+          // bright rails read as harsh glare columns on portrait screens)
+          float edge = smoothstep(48.0, 5.0, abs(abs(p.x) - uPlay.x * 0.5)) * 0.5;
+          // radar sweep running far -> near
+          float sp = fract(uTime * 0.1);
+          float band = exp(-pow((vUv.y - (0.96 - sp * 0.92)) * 10.0, 2.0)) * 0.22;
+          // far-edge melt into the planet haze
+          float farFade = 1.0 - smoothstep(0.78, 1.0, vUv.y);
+          float a = fade * farFade * (0.2 + minor * 0.26 + major * 0.24 + edge * 0.4 + band);
+          vec3 col = uTint * (0.22 + minor * 0.38 + major * 0.42 + edge * 0.22)
+                   + vec3(0.8) * band;
+          gl_FragColor = vec4(col, a);
+        }`,
+    });
+    this.corridor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.corridorMat);
+    this.corridor.rotation.x = -Math.PI / 2;
+    this.corridor.position.y = -0.6;
+    this.scene.add(this.corridor);
 
-    // Gaia citadel platform + atmosphere dome (bottom of the field)
-    this.basePlatform = new THREE.Mesh(
-      new THREE.BoxGeometry(420, 26, 130),
-      new THREE.MeshStandardMaterial({ color: '#111c2e', roughness: 0.6, metalness: 0.55 })
-    );
-    this.scene.add(this.basePlatform);
+    // Gaia citadel platform + atmospheric shield (bottom of the field)
+    this.platformGroup = this.buildPlatform();
+    this.scene.add(this.platformGroup);
 
-    this.baseDome = new THREE.Mesh(
-      new THREE.SphereGeometry(150, 26, 16, 0, Math.PI * 2, 0, Math.PI / 2),
-      new THREE.MeshStandardMaterial({
-        color: '#0284c7',
-        emissive: '#0284c7',
-        emissiveIntensity: 0.5,
-        transparent: true,
-        opacity: 0.4,
-        metalness: 0.2,
-        roughness: 0.3,
-      })
-    );
-    this.scene.add(this.baseDome);
-
+    this.shieldMat = new THREE.ShaderMaterial({
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+      uniforms: {
+        uColor: { value: new THREE.Color('#38bdf8') },
+        uPulse: { value: 1 },
+      },
+      vertexShader: `
+        varying vec3 vNw;
+        varying vec3 vPw;
+        void main() {
+          vNw = normalize(mat3(modelMatrix) * normal);
+          vec4 pw = modelMatrix * vec4(position, 1.0);
+          vPw = pw.xyz;
+          gl_Position = projectionMatrix * viewMatrix * pw;
+        }`,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uPulse;
+        varying vec3 vNw;
+        varying vec3 vPw;
+        void main() {
+          vec3 v = normalize(cameraPosition - vPw);
+          float rim = pow(1.0 - clamp(abs(dot(normalize(vNw), v)), 0.0, 1.0), 3.2);
+          gl_FragColor = vec4(uColor * (0.4 + rim * 1.0), (0.03 + rim * 0.82) * uPulse);
+        }`,
+    });
     this.shieldDome = new THREE.Mesh(
-      new THREE.SphereGeometry(210, 26, 16, 0, Math.PI * 2, 0, Math.PI / 2),
-      new THREE.MeshBasicMaterial({
-        color: '#38bdf8',
-        transparent: true,
-        opacity: 0.16,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        toneMapped: false,
-      })
+      new THREE.SphereGeometry(215, 36, 20, 0, Math.PI * 2, 0, Math.PI / 2),
+      this.shieldMat
     );
     this.scene.add(this.shieldDome);
 
-    // Parallax star shells
-    const layers: Array<[number, number, number, number]> = [
-      [700, 2400, 3.2, 0.85],
-      [320, 1500, 2.2, 0.6],
-    ];
-    for (const [count, radius, size, opacity] of layers) {
-      const positions = new Float32Array(count * 3);
-      for (let i = 0; i < count; i++) {
-        const theta = Math.random() * Math.PI * 2;
-        // Sky-biased sphere sampling: uniform cos(phi) on [-0.2, 1.0]. The
-        // old `* 1.6 - 0.2` range exceeded Math.acos's [-1, 1] domain for
-        // ~25% of stars — every one of those became a NaN position attribute
-        // (console: "Computed radius is NaN") and silently vanished.
-        const phi = Math.acos(Math.random() * 1.2 - 0.2);
-        positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
-        positions[i * 3 + 1] = Math.abs(radius * Math.cos(phi)) * 0.6 + 60;
-        positions[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(theta);
-      }
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      const pts = new THREE.Points(
-        geo,
-        new THREE.PointsMaterial({
-          color: '#c7d8ff',
-          size,
-          sizeAttenuation: false,
-          transparent: true,
-          opacity,
-          depthWrite: false,
-          toneMapped: false,
-        })
-      );
-      this.scene.add(pts);
-      this.stars.push(pts);
+    // The hero planet
+    this.earth = buildEarth(this.EARTH_R);
+    this.earthTextures = this.earth.textures;
+    this.scene.add(this.earth.group);
+
+    // Muzzle flash light (pulsed with recoil in syncTurret)
+    this.muzzleLight = new THREE.PointLight('#ffdfb0', 0, 520, 2);
+    this.scene.add(this.muzzleLight);
+    // Platform floodlight: keeps the hero cannon + citadel out of silhouette
+    // at the near end of the field (they sit far from the key light).
+    this.platformFlood = new THREE.PointLight('#cfe4ff', 26000, 700, 2);
+    this.scene.add(this.platformFlood);
+  }
+
+  private buildPlatform(): THREE.Group {
+    const g = new THREE.Group();
+    const mkHull = (color: string, metal = 0.6, rough = 0.45) =>
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color),
+        metalness: metal,
+        roughness: rough,
+      });
+    const mkGlow = (color: string, intensity = 1.6) => {
+      const c = new THREE.Color(color);
+      return new THREE.MeshStandardMaterial({
+        color: c,
+        emissive: c,
+        emissiveIntensity: intensity,
+        metalness: 0.1,
+        roughness: 0.5,
+        toneMapped: false,
+      });
+    };
+
+    // Hexagonal slab + raised deck
+    const slab = new THREE.Mesh(new THREE.CylinderGeometry(150, 170, 18, 6), mkHull('#16233c', 0.65, 0.5));
+    slab.position.y = 9;
+    g.add(slab);
+    const deck = new THREE.Mesh(new THREE.CylinderGeometry(120, 133, 10, 6), mkHull('#1d2d4a', 0.6, 0.42));
+    deck.position.y = 22;
+    g.add(deck);
+    // Hex trim ring (6-segment torus hugging the slab edge)
+    const trim = new THREE.Mesh(new THREE.TorusGeometry(140, 1.6, 6, 6), mkGlow('#38bdf8', 1.5));
+    trim.rotation.x = Math.PI / 2;
+    trim.rotation.z = Math.PI / 6;
+    trim.position.y = 26.5;
+    g.add(trim);
+
+    // Central command citadel — the spire is the base-HP indicator
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(15, 21, 56, 6), mkHull('#22355a', 0.55, 0.4));
+    tower.position.set(0, 55, -26);
+    g.add(tower);
+    for (let i = 0; i < 3; i++) {
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(2.4, 30, 1), mkGlow('#7dd3fc', 1.2));
+      const a = (i / 3) * Math.PI * 2 + 0.5;
+      strip.position.set(Math.cos(a) * 18.5, 55, -26 + Math.sin(a) * 18.5);
+      strip.rotation.y = -a;
+      g.add(strip);
     }
+    this.baseSpire = new THREE.Mesh(new THREE.ConeGeometry(9, 46, 6), mkGlow('#38bdf8', 1.3));
+    this.baseSpire.position.set(0, 106, -26);
+    g.add(this.baseSpire);
+    const spireGlow = glowSprite('#7dd3fc', 34, 0.4);
+    spireGlow.position.set(0, 118, -26);
+    g.add(spireGlow);
+
+    // Corner towers (the front pair frames the cannon's fire line)
+    for (const [tx, tz] of [
+      [-64, 66],
+      [64, 66],
+      [-64, -96],
+      [64, -96],
+    ] as const) {
+      const t = new THREE.Mesh(new THREE.BoxGeometry(13, 30, 13), mkHull('#1d2d4a', 0.6, 0.42));
+      t.position.set(tx, 38, tz);
+      g.add(t);
+      const capT = new THREE.Mesh(new THREE.BoxGeometry(15, 2, 15), mkHull('#31446b', 0.65, 0.4));
+      capT.position.set(tx, 54, tz);
+      g.add(capT);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 6), mkGlow('#fbbf24', 2));
+      lamp.position.set(tx, 58, tz);
+      g.add(lamp);
+    }
+    return g;
   }
 
   private buildParticles() {
@@ -361,6 +512,10 @@ export class ThreeWorld {
 
   setQuality(level: number) {
     this.quality = clamp(level, 0, 2);
+    // Quality 0 = best (governor convention): full bloom. 2 = struggling
+    // device: bypass the composer entirely and render direct.
+    this.bloomOn = this.quality <= 1;
+    this.bloomPass.strength = this.quality === 0 ? 0.44 : 0.36;
     this.setSize(this.cssW, this.cssH);
   }
 
@@ -368,30 +523,68 @@ export class ThreeWorld {
     this.cssW = Math.max(1, cssW);
     this.cssH = Math.max(1, cssH);
     const cap = this.quality >= 2 ? 1.25 : this.quality === 1 ? 1.6 : 2;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
+    const dpr = Math.min(window.devicePixelRatio || 1, cap);
+    this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(this.cssW, this.cssH, false);
+    this.composer.setPixelRatio(dpr);
+    this.composer.setSize(this.cssW, this.cssH);
     if (this.overlay) {
-      const dpr = this.renderer.getPixelRatio();
       this.overlay.width = Math.round(this.cssW * dpr);
       this.overlay.height = Math.round(this.cssH * dpr);
       this.overlay.style.width = `${this.cssW}px`;
       this.overlay.style.height = `${this.cssH}px`;
     }
     this.fitCamera();
+    this.layoutFurniture();
   }
 
   setLogicalSize(w: number, h: number) {
     this.LW = Math.max(1, w);
     this.LH = Math.max(1, h);
-    this.layoutFurniture();
     this.fitCamera();
+    this.layoutFurniture();
   }
 
+  /** Place the platform, corridor and — critically — frame the Earth's limb
+   *  inside the sky band between the top screen edge and the corridor's far
+   *  melt line. Solving the limb height from the fitted camera keeps the
+   *  horizon framed correctly across portrait and landscape pitches. */
   private layoutFurniture() {
     const bz = -this.LH / 2 + 24;
-    this.basePlatform.position.set(0, 12, bz);
-    this.baseDome.position.set(0, 24, bz);
-    this.shieldDome.position.set(0, 20, bz);
+    this.platformGroup.position.set(0, 0, bz);
+    this.shieldDome.position.set(0, 8, bz + 26);
+    this.platformFlood.position.set(0, 210, bz + 64);
+
+    const w = this.LW * 1.4;
+    const d = this.LH * 1.4;
+    this.corridor.scale.set(w, d, 1);
+    this.corridorMat.uniforms.uSize.value.set(w, d);
+    this.corridorMat.uniforms.uPlay.value.set(this.LW, this.LH);
+
+    // --- Earth framing ------------------------------------------------------
+    const cam = this.camBasePos;
+    // Camera looks from behind/above toward +z; the positive look-ahead
+    // distance is target.z - cam.z (cam.z is the negative side).
+    const pitch = Math.atan2(cam.y - this.camTarget.y, Math.max(1, this.camTarget.z - cam.z));
+    const fovHalf = THREE.MathUtils.degToRad(this.camera.fov / 2);
+    const topAngle = pitch - fovHalf;
+    const farZ = this.LH * 0.7;
+    const farAngle = Math.atan2(cam.y + 1, Math.max(1, farZ - cam.z));
+    const limbAngle = topAngle + (farAngle - topAngle) * 0.42;
+    const earthZ = this.LH * 1.2;
+    const limbY = cam.y - Math.tan(limbAngle) * (earthZ - cam.z);
+    this.earth?.group.position.set(0, limbY - this.EARTH_R, earthZ);
+
+    // --- Sun: hover just above the limb, left of center --------------------
+    const el = Math.max(0.05, limbAngle - 0.05);
+    const az = -0.62;
+    const dist = 3800;
+    this.sun.position.set(
+      cam.x + dist * Math.cos(el) * Math.sin(az),
+      cam.y + dist * Math.sin(el),
+      cam.z + dist * Math.cos(el) * Math.cos(az)
+    );
+    this.keyLight.position.copy(this.sun.position);
   }
 
   /** Iteratively fit the tilted camera so the whole play rect stays on screen. */
@@ -497,8 +690,8 @@ export class ThreeWorld {
   /** Removes an entity mesh from the scene AND frees its GPU-side
    *  geometry/material allocations. Every mesh is built from fresh
    *  geometries/materials (only the glow/icon textures are shared and cached),
-   * so a bare scene.remove() leaks WebGL buffers for every retired entity —
-   * at auto-fire cadence a 10-minute run leaked thousands of them.
+   *  so a bare scene.remove() leaks WebGL buffers for every retired entity —
+   *  at auto-fire cadence a 10-minute run leaked thousands of them.
    *  (material.dispose() does NOT dispose shared textures — safe.) */
   private destroy(obj: THREE.Object3D) {
     obj.traverse((o) => {
@@ -531,11 +724,18 @@ export class ThreeWorld {
     this.syncComets(state);
     this.syncParticles(state);
     this.syncTelegraphs(state, timeSec);
-    this.syncBase(state);
+    this.syncBase(state, timeSec);
     this.syncStars(dt, state);
-    this.drawOverlay(state);
+    this.earth?.update(dt);
+    this.corridorMat.uniforms.uTime.value = timeSec;
+    this.drawOverlay(state, timeSec);
 
-    this.renderer.render(this.scene, this.camera);
+    this.renderFrame();
+  }
+
+  private renderFrame() {
+    if (this.bloomOn) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   private applyEraMood(state: WorldState) {
@@ -552,12 +752,12 @@ export class ThreeWorld {
       }
       fog.color.setStyle(era.palette.bgBottom);
       this.hemiLight.color.setStyle(era.palette.starsColor || '#7dd3fc');
-      this.keyLight.color.setStyle(era.palette.ambientGlow || '#e2e8f0');
+      this.corridorMat.uniforms.uTint.value.setStyle(era.palette.starsColor || '#67e8f9');
     }
     fog.near = state.voidFogTimer > 0 ? 240 : 500;
     fog.far = state.voidFogTimer > 0 ? 1500 : 2600;
-    this.keyLight.intensity = overdrive ? 2.5 : 1.9;
-    this.hemiLight.intensity = overdrive ? 1.35 : 1.05;
+    this.keyLight.intensity = overdrive ? 3.0 : 2.4;
+    this.hemiLight.intensity = overdrive ? 1.15 : 0.85;
   }
 
   private syncCamera(state: WorldState) {
@@ -594,16 +794,32 @@ export class ThreeWorld {
     this.turretGroup.position.set(this.wx(state.cannonX), 0, this.wz(state.cannonY));
     if (this.turretBarrel) {
       // aimAngle: -PI/2 = straight up-field. Logical (cos a, sin a) → world (cos a, -sin a).
-      this.turretBarrel.rotation.y = Math.atan2(Math.cos(state.aimAngle), -Math.sin(state.aimAngle));
+      const yaw = Math.atan2(Math.cos(state.aimAngle), -Math.sin(state.aimAngle));
+      this.turretBarrel.rotation.y = yaw;
       const recoil = clamp(state.recoilOffset, 0, 8);
       this.turretBarrel.position.z = -recoil * 1.6;
-      this.turretBarrel.position.y = 20 - recoil * 0.35;
+      this.turretBarrel.position.y = 22 - recoil * 0.35;
       if (this.muzzle) {
         const flashing = recoil > 0.4;
         const mat = this.muzzle.material as THREE.SpriteMaterial;
-        mat.opacity = flashing ? 0.85 : 0;
-        this.muzzle.scale.setScalar(flashing ? 12 + recoil : 10);
+        mat.opacity = flashing ? 0.9 : 0;
+        this.muzzle.scale.setScalar(flashing ? 18 + recoil * 1.6 : 14);
       }
+      // Coil heat: accelerator rings glow hotter while the gun is cycling.
+      const coils = this.turretBarrel.userData.coils as THREE.Mesh[] | undefined;
+      if (coils) {
+        const heat = 1.6 + recoil * 0.5;
+        for (const c of coils) {
+          (c.material as THREE.MeshStandardMaterial).emissiveIntensity = heat;
+        }
+      }
+      // Muzzle flash point light (physical units: candela with decay²).
+      this.muzzleLight.position.set(
+        this.wx(state.cannonX) + Math.sin(yaw) * 58,
+        30,
+        this.wz(state.cannonY) + Math.cos(yaw) * 58
+      );
+      this.muzzleLight.intensity = recoil > 0.05 ? Math.min(52000, recoil * 9000) : 0;
     }
   }
 
@@ -815,16 +1031,20 @@ export class ThreeWorld {
     for (let i = ri; i < this.telegraphRings.length; i++) this.telegraphRings[i].visible = false;
   }
 
-  private syncBase(state: WorldState) {
+  private syncBase(state: WorldState, timeSec: number) {
     const hpRatio = clamp(state.currentBaseHp / Math.max(1, state.maxBaseHp), 0, 1);
-    const domeMat = this.baseDome.material as THREE.MeshStandardMaterial;
+    const spireMat = this.baseSpire.material as THREE.MeshStandardMaterial;
     const baseColor = cachedColor(state.skinColors.base);
-    domeMat.color.copy(baseColor);
-    domeMat.emissive.copy(baseColor);
-    domeMat.emissive.lerp(cachedColor('#ef4444'), (1 - hpRatio) * 0.8);
+    spireMat.color.copy(baseColor);
+    spireMat.emissive.copy(baseColor);
+    spireMat.emissive.lerp(cachedColor('#ef4444'), (1 - hpRatio) * 0.85);
+    spireMat.emissiveIntensity = 1.2 + 0.35 * Math.sin(timeSec * (hpRatio < 0.35 ? 9 : 2.5));
     this.shieldDome.visible = state.currentShieldHp > 0;
-    const glow = this.shieldDome.material as THREE.MeshBasicMaterial;
-    glow.opacity = 0.1 + 0.12 * (state.currentShieldHp / Math.max(1, state.currentShieldHp + 40));
+    if (this.shieldDome.visible) {
+      this.shieldMat.uniforms.uPulse.value =
+        0.85 + 0.25 * Math.sin(timeSec * 3.2) +
+        0.3 * (state.currentShieldHp / Math.max(1, state.currentShieldHp + 60));
+    }
   }
 
   private syncStars(dt: number, state: WorldState) {
@@ -835,44 +1055,163 @@ export class ThreeWorld {
   }
 
   // -------------------------------------------------------------------------
-  // 2D overlay — floating combat text + aim crosshair (crisp, cheap)
+  // 2D overlay — tactical reticle, aim guide, vignette + floating combat text
   // -------------------------------------------------------------------------
 
-  private drawOverlay(state: WorldState) {
+  private drawOverlay(state: WorldState, timeSec: number) {
     const ctx = this.overlayCtx;
     const canvas = this.overlay;
     if (!ctx || !canvas) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     const scale = canvas.height / state.L_HEIGHT;
 
+    this.paintVignette(ctx, canvas, state, timeSec);
+
+    // Aim guide: soft dots tracing the barrel's fire line to the aim point —
+    // depth feedback that the 3D tilt used to hide.
     const aimLx = state.cannonX + Math.cos(state.aimAngle) * 260;
     const aimLy = state.cannonY + Math.sin(state.aimAngle) * 260;
+    const muzzleLx = state.cannonX + Math.cos(state.aimAngle) * 58;
+    const muzzleLy = state.cannonY + Math.sin(state.aimAngle) * 58;
+    const STEPS = 7;
+    ctx.fillStyle = '#7dd3fc';
+    for (let i = 1; i <= STEPS; i++) {
+      const t = i / (STEPS + 1);
+      const px = this.projectToOverlay(
+        muzzleLx + (aimLx - muzzleLx) * t,
+        muzzleLy + (aimLy - muzzleLy) * t,
+        PLAY_Y + 8
+      );
+      if (!px) continue;
+      ctx.globalAlpha = 0.3 * (1 - t * 0.72);
+      ctx.beginPath();
+      ctx.arc(px.x, px.y, Math.max(1, 2 * scale), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Tactical reticle with target-lock brackets
     const aimPx = this.projectToOverlay(aimLx, aimLy, PLAY_Y + 6);
     if (aimPx) {
-      ctx.strokeStyle = 'rgba(226, 232, 240, 0.55)';
-      ctx.lineWidth = Math.max(1, scale * 1.2);
+      let hover: Threat | null = null;
+      let bestD = Infinity;
+      for (const t of state.threats) {
+        const dx = t.x - aimLx;
+        const dy = t.y - aimLy;
+        const d = dx * dx + dy * dy;
+        const rr = (t.radius + 26) * (t.radius + 26);
+        if (d < rr && d < bestD) {
+          bestD = d;
+          hover = t;
+        }
+      }
+      const col = hover ? '#ff5f6b' : '#a5dcff';
+      const r = 12 * scale;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = Math.max(1.2, 1.5 * scale);
       ctx.beginPath();
-      ctx.arc(aimPx.x, aimPx.y, 11 * scale, 0, Math.PI * 2);
-      ctx.moveTo(aimPx.x - 16 * scale, aimPx.y);
-      ctx.lineTo(aimPx.x - 5 * scale, aimPx.y);
-      ctx.moveTo(aimPx.x + 5 * scale, aimPx.y);
-      ctx.lineTo(aimPx.x + 16 * scale, aimPx.y);
+      ctx.arc(aimPx.x, aimPx.y, r, 0, Math.PI * 2);
       ctx.stroke();
+      // Rotating cardinal ticks
+      const rot = timeSec * 1.5;
+      for (let k = 0; k < 4; k++) {
+        const a = rot + (k * Math.PI) / 2;
+        const c = Math.cos(a);
+        const s = Math.sin(a);
+        ctx.beginPath();
+        ctx.moveTo(aimPx.x + c * (r + 3 * scale), aimPx.y + s * (r + 3 * scale));
+        ctx.lineTo(aimPx.x + c * (r + 9 * scale), aimPx.y + s * (r + 9 * scale));
+        ctx.stroke();
+      }
+      // Center dot
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(aimPx.x, aimPx.y, Math.max(1.2, 1.7 * scale), 0, Math.PI * 2);
+      ctx.fill();
+      // Target lock: corner brackets + soft glow ring
+      if (hover) {
+        const br = 21 * scale;
+        const arm = 7 * scale;
+        ctx.lineWidth = Math.max(1.6, 2.2 * scale);
+        for (const [sx, sy] of [
+          [-1, -1],
+          [1, -1],
+          [-1, 1],
+          [1, 1],
+        ] as const) {
+          ctx.beginPath();
+          ctx.moveTo(aimPx.x + sx * br - sx * arm, aimPx.y + sy * br);
+          ctx.lineTo(aimPx.x + sx * br, aimPx.y + sy * br);
+          ctx.lineTo(aimPx.x + sx * br, aimPx.y + sy * br - sy * arm);
+          ctx.stroke();
+        }
+      }
+      // Fire pulse: expanding ring on recoil
+      if (state.recoilOffset > 0.5) {
+        ctx.globalAlpha = clamp(state.recoilOffset / 8, 0, 0.6);
+        ctx.lineWidth = Math.max(1, 1.4 * scale);
+        ctx.beginPath();
+        ctx.arc(aimPx.x, aimPx.y, r + 5 * scale + state.recoilOffset * 2.4 * scale, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
     }
 
+    // Floating combat text — dark stroke keeps it readable over bright blooms
     for (let i = 0; i < state.floatingTexts.length; i++) {
       const ft = state.floatingTexts[i];
       const px = this.projectToOverlay(ft.x, ft.y, PLAY_Y + 46);
       if (!px) continue;
       ctx.globalAlpha = ft.alpha;
-      ctx.font = `bold ${Math.max(8, Math.round(14 * ft.scale * scale))}px sans-serif`;
+      const fs = Math.max(8, Math.round(14 * ft.scale * scale));
+      ctx.font = `bold ${fs}px ui-sans-serif, system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = 'rgba(2, 6, 23, 0.75)';
-      ctx.fillText(ft.text, px.x + scale, px.y + scale);
+      ctx.lineWidth = Math.max(2, fs * 0.2);
+      ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+      ctx.strokeText(ft.text, px.x, px.y);
       ctx.fillStyle = ft.color;
       ctx.fillText(ft.text, px.x, px.y);
       ctx.globalAlpha = 1;
+    }
+  }
+
+  /** Cinematic corner vignette (cached) + low-HP red danger pulse. */
+  private paintVignette(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, state: WorldState, timeSec: number) {
+    const key = `${canvas.width}x${canvas.height}`;
+    if (this.vignetteKey !== key || !this.vignetteGrad) {
+      const g = ctx.createRadialGradient(
+        canvas.width / 2,
+        canvas.height / 2,
+        Math.min(canvas.width, canvas.height) * 0.42,
+        canvas.width / 2,
+        canvas.height / 2,
+        Math.max(canvas.width, canvas.height) * 0.74
+      );
+      g.addColorStop(0, 'rgba(3, 7, 18, 0)');
+      g.addColorStop(1, 'rgba(3, 7, 18, 0.34)');
+      this.vignetteGrad = g;
+      this.vignetteKey = key;
+    }
+    ctx.fillStyle = this.vignetteGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const hp = clamp(state.currentBaseHp / Math.max(1, state.maxBaseHp), 0, 1);
+    if (hp < 0.4) {
+      const k = (0.4 - hp) / 0.4;
+      const a = k * (0.17 + 0.11 * Math.sin(timeSec * 6.5));
+      const rg = ctx.createRadialGradient(
+        canvas.width / 2,
+        canvas.height / 2,
+        Math.min(canvas.width, canvas.height) * 0.34,
+        canvas.width / 2,
+        canvas.height / 2,
+        Math.max(canvas.width, canvas.height) * 0.7
+      );
+      rg.addColorStop(0, 'rgba(239, 68, 68, 0)');
+      rg.addColorStop(1, `rgba(239, 68, 68, ${a.toFixed(3)})`);
+      ctx.fillStyle = rg;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
   }
 
@@ -892,12 +1231,23 @@ export class ThreeWorld {
   // -------------------------------------------------------------------------
 
   private startIdleLoop() {
+    let overlayCleared = false;
     const tick = () => {
       if (this.disposed) return;
       this.idleRaf = requestAnimationFrame(tick);
       const now = performance.now();
-      if (now - this.lastDrivenAt < 350) return; // engine is driving frames
+      if (now - this.lastDrivenAt < 350) {
+        overlayCleared = false;
+        return; // engine is driving frames
+      }
+      // Clear any stale reticle/text the last gameplay frame left behind.
+      if (!overlayCleared && this.overlay && this.overlayCtx) {
+        this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+        overlayCleared = true;
+      }
       const t = now / 1000;
+      const dt = this.idleLast ? Math.min(0.05, (now - this.idleLast) / 1000) : 0.016;
+      this.idleLast = now;
       this.camera.position.set(
         this.camBasePos.x + Math.sin(t * 0.12) * 90,
         this.camBasePos.y + Math.sin(t * 0.09) * 30,
@@ -906,7 +1256,9 @@ export class ThreeWorld {
       this.camera.lookAt(this.camTarget);
       this.camera.updateMatrixWorld();
       for (let i = 0; i < this.stars.length; i++) this.stars[i].rotation.y += 0.0016;
-      this.renderer.render(this.scene, this.camera);
+      this.earth?.update(dt);
+      this.corridorMat.uniforms.uTime.value = t;
+      this.renderFrame();
     };
     this.idleRaf = requestAnimationFrame(tick);
   }
@@ -921,6 +1273,11 @@ export class ThreeWorld {
       if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
       else mat?.dispose();
     });
+    for (const tex of this.earthTextures) tex.dispose();
+    (this.nebula.userData.tex as THREE.Texture | undefined)?.dispose();
+    this.bloomPass.dispose();
+    this.composer.dispose();
     this.renderer.dispose();
   }
 }
+

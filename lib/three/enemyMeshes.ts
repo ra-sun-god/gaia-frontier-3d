@@ -542,36 +542,177 @@ export function buildProjectileMesh(p: Projectile): THREE.Group {
   return grp;
 }
 
-/** Player turret — emplacement + rotating skin-tinted cannon. */
+/** Hero orbital-defense railcannon — the centerpiece of the scene.
+ *
+ *  Layout contract (driven by ThreeWorld.syncTurret):
+ *   - `group`  sits at the cannon's field position; only yaw comes from the
+ *     rotating `barrel` child (author children facing +Z, pivot at origin).
+ *   - `barrel.userData.coils` lists the emissive coil meshes whose
+ *     emissiveIntensity is pulsed with recoil (charge/heat feedback).
+ *   - `muzzle` is the additive flash sprite at the barrel tip.
+ */
 export function buildTurret(cannonColor: string): {
   group: THREE.Group;
   barrel: THREE.Group;
   muzzle: THREE.Sprite;
 } {
   const group = new THREE.Group();
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(16, 22, 16, 14), hullMat('#1e293b', 0.6, 0.5));
-  base.position.y = 8;
-  group.add(base);
-  const dome = new THREE.Mesh(
-    new THREE.SphereGeometry(15, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2),
-    hullMat(cannonColor, 0.5, 0.35)
-  );
-  dome.position.y = 15;
-  group.add(dome);
+  const dark = '#26365a';
+  const steel = '#4d6187';
+  const accent = cannonColor;
 
+  // --- Static emplacement ---------------------------------------------------
+  // Octagonal armored pedestal sunk into the platform
+  const pedestal = new THREE.Mesh(
+    new THREE.CylinderGeometry(19, 24, 12, 8),
+    hullMat(dark, 0.65, 0.45)
+  );
+  pedestal.position.y = 6;
+  group.add(pedestal);
+
+  // Glowing trim ring where pedestal meets the platform
+  const trim = new THREE.Mesh(
+    new THREE.TorusGeometry(20.5, 0.9, 8, 40),
+    emissiveMat('#38bdf8', 2.2)
+  );
+  trim.rotation.x = Math.PI / 2;
+  trim.position.y = 11.5;
+  group.add(trim);
+
+  // Rotating ring collar
+  const collar = new THREE.Mesh(
+    new THREE.CylinderGeometry(14.5, 16.5, 6, 10),
+    hullMat(steel, 0.7, 0.35)
+  );
+  collar.position.y = 14.5;
+  group.add(collar);
+  const collarLight = new THREE.Mesh(
+    new THREE.TorusGeometry(15.4, 0.5, 6, 34),
+    emissiveMat(accent, 1.9)
+  );
+  collarLight.rotation.x = Math.PI / 2;
+  collarLight.position.y = 17.2;
+  group.add(collarLight);
+
+  // Yoke arms that carry the barrel
+  for (const dx of [-11.5, 11.5]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(4.5, 12, 9), hullMat(steel, 0.65, 0.4));
+    arm.position.set(dx, 23, -2);
+    group.add(arm);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(5.4, 1.6, 10), hullMat(shade(steel, 0.18), 0.7, 0.35));
+    cap.position.set(dx, 29.4, -2);
+    group.add(cap);
+  }
+
+  // Sensor cluster behind the breech
+  const sensor = new THREE.Mesh(new THREE.SphereGeometry(3.4, 12, 9), hullMat('#232f4a', 0.6, 0.35));
+  sensor.position.set(0, 31, -8);
+  group.add(sensor);
+  const sensorEye = glowSprite('#7dd3fc', 7, 0.65);
+  sensorEye.position.set(0, 31, -5.2);
+  group.add(sensorEye);
+  // Comms antennas
+  for (const [ax, h, tilt] of [
+    [-7, 16, 0.28],
+    [7, 12, -0.34],
+  ] as const) {
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.4, h, 5), hullMat('#8ea3c4', 0.8, 0.3));
+    mast.position.set(ax, 26 + h * 0.4, -10);
+    mast.rotation.z = tilt;
+    group.add(mast);
+    const tipLamp = new THREE.Mesh(new THREE.SphereGeometry(0.65, 6, 6), emissiveMat('#f87171', 2.4));
+    tipLamp.position.set(ax - Math.sin(tilt) * h * 0.5, 26 + h * 0.8, -10);
+    group.add(tipLamp);
+  }
+
+  // --- Rotating barrel assembly (pivot at origin; raised/mounted by world) ---
   const barrel = new THREE.Group();
-  const tube = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 4.2, 46, 10), hullMat(cannonColor, 0.55, 0.35));
+  const coils: THREE.Mesh[] = [];
+
+  // Breech / receiver block
+  const receiver = new THREE.Mesh(new THREE.BoxGeometry(9.5, 8, 13), hullMat(dark, 0.6, 0.42));
+  receiver.position.set(0, 0, 1);
+  barrel.add(receiver);
+  const breechCap = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 3, 8), hullMat(steel, 0.7, 0.35));
+  breechCap.rotation.x = Math.PI / 2;
+  breechCap.position.set(0, 0, -6.4);
+  barrel.add(breechCap);
+
+  // Main barrel tube with flare
+  const tube = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.7, 3.6, 40, 12),
+    hullMat(steel, 0.75, 0.32)
+  );
   tube.rotation.x = Math.PI / 2;
-  tube.position.z = 20;
+  tube.position.z = 27;
   barrel.add(tube);
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(5.4, 5.4, 8, 10), hullMat('#334155', 0.6, 0.4));
-  collar.rotation.x = Math.PI / 2;
-  barrel.add(collar);
-  const muzzle = glowSprite('#f8fafc', 10, 0);
-  muzzle.position.z = 44;
+
+  // Twin rails over the tube (railgun look), tips tinted by the skin
+  for (const dx of [-4.4, 4.4]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.5, 46), hullMat(shade(accent, -0.1), 0.7, 0.35));
+    rail.position.set(dx, 2.2, 24);
+    barrel.add(rail);
+    const railGlow = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 44), emissiveMat(accent, 2.1));
+    railGlow.position.set(dx, 1.2, 24);
+    barrel.add(railGlow);
+  }
+
+  // Accelerator coils along the tube — these pulse with recoil heat.
+  // (TorusGeometry lies in the XY plane with its hole along +Z — exactly
+  // what a coil ring around a forward barrel needs.)
+  for (const cz of [12, 22, 32, 42]) {
+    const coil = new THREE.Mesh(
+      new THREE.TorusGeometry(4.9, 0.85, 8, 20),
+      emissiveMat(accent, 1.6)
+    );
+    coil.position.z = cz;
+    barrel.add(coil);
+    coils.push(coil);
+  }
+
+  // Cooling fins between coils
+  for (const fz of [17, 27, 37]) {
+    const fin = new THREE.Mesh(new THREE.CylinderGeometry(4.1, 4.1, 0.5, 12), hullMat('#2c3a57', 0.7, 0.4));
+    fin.rotation.x = Math.PI / 2;
+    fin.position.z = fz;
+    barrel.add(fin);
+  }
+
+  // Muzzle brake
+  const brake = new THREE.Mesh(
+    new THREE.CylinderGeometry(4.6, 4.2, 8, 12),
+    hullMat(dark, 0.7, 0.38)
+  );
+  brake.rotation.x = Math.PI / 2;
+  brake.position.z = 50;
+  barrel.add(brake);
+  const brakeRing = new THREE.Mesh(new THREE.TorusGeometry(4.8, 0.7, 8, 18), emissiveMat(accent, 1.3));
+  brakeRing.position.z = 53.5;
+  barrel.add(brakeRing);
+
+  // Underslung energy cells
+  for (const dx of [-5.4, 5.4]) {
+    const cell = new THREE.Mesh(new THREE.CapsuleGeometry(1.5, 6, 4, 8), hullMat('#243352', 0.6, 0.4));
+    cell.rotation.x = Math.PI / 2;
+    cell.position.set(dx, -4.4, 4);
+    barrel.add(cell);
+    const cellGlow = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 6.4), emissiveMat('#fbbf24', 1.4));
+    cellGlow.position.set(dx, -5.9, 4);
+    barrel.add(cellGlow);
+  }
+
+  // Muzzle flash sprite (opacity driven by recoil in syncTurret)
+  const muzzle = glowSprite('#ffe9c4', 16, 0);
+  muzzle.position.z = 56;
   barrel.add(muzzle);
-  barrel.position.y = 20;
+
+  barrel.userData.coils = coils;
+  barrel.position.y = 22;
   group.add(barrel);
+
+  // Hero presence: the cannon is the star of the composition — scale the
+  // whole emplacement up so it reads as a heavy orbital battery.
+  group.scale.setScalar(1.25);
 
   return { group, barrel, muzzle };
 }
