@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<body style="margin: 0; background: #0b1220; color: #9fe8ff; font: 12px monospace">
+  <!-- DEV-ONLY harness: simulates how the YouTube Playables SDK Test Suite
+       hosts the game (iframe + "playableIframe" MessageChannel handshake) to
+       verify firstFrameReady/gameReady delivery end-to-end. -->
+  <iframe id="g" src="/" style="width: 500px; height: 860px; border: 0"></iframe>
+  <pre id="log" style="padding: 8px"></pre>
+  <script>
+    var logEl = document.getElementById('log');
+    var t0 = Date.now();
+    var log = function (m) { logEl.textContent += m + '\n'; };
+    window.addEventListener('message', function (ev) {
+      if (ev.data === 'playableIframe') {
+        log('[harness] SDK channel greeting at +' + (Date.now() - t0) + 'ms');
+        var port = ev.ports[0];
+        port.onmessage = function (e) {
+          log('[harness] port message at +' + (Date.now() - t0) + 'ms :: ' +
+              JSON.stringify(e.data).slice(0, 200));
+        };
+        // Handshake ack, mirroring the test suite's reply over the port.
+        port.postMessage({});
+      }
+    });
+    log('[harness] listening for SDK greeting...');
+  </script>
+</body>
+</html>

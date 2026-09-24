@@ -1,0 +1,672 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700;800;900&display=swap');
+
+/* ========================================================================= */
+/* CASUAL SCI-FI MOBILE 2.5D GAME UI DESIGN SYSTEM                          */
+/* Palette:                                                                  */
+/*   - Slate Navy:       #40436C                                             */
+/*   - Cobalt Azure:     #1474E0                                             */
+/*   - Golden Yellow:    #FAC602                                             */
+/*   - Energetic Lime:   #53CE17                                             */
+/*   - Neon Cyan:        #00D2FF                                             */
+/* ========================================================================= */
+
+:root {
+  --color-game-navy: #40436C;
+  --color-game-blue: #1474E0;
+  --color-game-gold: #FAC602;
+  --color-game-green: #53CE17;
+  --color-game-cyan: #00D2FF;
+}
+
+body {
+  font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none; /* iOS long-press magnifier must never steal a drag */
+  user-select: none;
+  /* Touch control hygiene — felt directly as "controls feel smooth":
+     overscroll-behavior kills iOS Safari's rubber-band bounce fighting the
+     canvas for every gesture; touch-action: manipulation removes the legacy
+     300ms double-tap-zoom delay on every UI tap (the game canvas and the
+     joystick opt further up to touch-action: none). */
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+/* ========================================================================= */
+/* SLEEK SCROLLBARS — thin, rounded, translucent on EVERY scrolling surface  */
+/* (modal bodies, shop/vault lists, leaderboards, menus, iOS help sheets).   */
+/* Firefox uses the modern scrollbar-width / scrollbar-color pair; WebKit    */
+/* gets a sculpted 6px gradient thumb. Tracks stay invisible so rails only  */
+/* appear where content actually scrolls.                                    */
+/* ========================================================================= */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 210, 255, 0.45) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 210, 255, 0.55),
+    rgba(20, 116, 224, 0.55)
+  );
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 210, 255, 0.9),
+    rgba(20, 116, 224, 0.9)
+  );
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ========================================================================= */
+/* KEYBOARD-ONLY UI VISIBILITY                                               */
+/* Desktop legend rows (aim keys, hotkeys) render ONLY when a mouse/keyboard */
+/* is available (primary OR any pointer is fine + hover-capable). Pure       */
+/* touch players never see them.                                             */
+/* ========================================================================= */
+.kb-only {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine), (any-hover: hover), (any-pointer: fine) {
+  .kb-only {
+    display: flex;
+  }
+}
+
+/* ========================================================================= */
+/* 1. TACTILE 3D BUTTONS & SQUIRCLES                                        */
+/* ========================================================================= */
+
+/* Golden CTA Button ("LEVEL UP", "START") */
+.btn-game-gold {
+  background: linear-gradient(180deg, #FFE14D 0%, #FAC602 45%, #E5A500 90%, #C98800 100%);
+  border: 3px solid #140E00;
+  box-shadow: 
+    inset 0 2px 2px rgba(255, 255, 255, 0.75),
+    0 5px 0 #9E6700,
+    0 7px 0 #000000,
+    0 10px 16px rgba(0, 0, 0, 0.45);
+  color: #FFFFFF;
+  font-weight: 900;
+  text-transform: uppercase;
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.85);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.08s ease;
+}
+.btn-game-gold:hover {
+  filter: brightness(1.06);
+}
+.btn-game-gold:active {
+  transform: translateY(4px);
+  box-shadow: 
+    inset 0 1px 2px rgba(255, 255, 255, 0.5),
+    0 1px 0 #9E6700,
+    0 2px 0 #000000,
+    0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Navy Slate Button ("REMOVE GEAR", "CANCEL", Secondary Actions) */
+.btn-game-navy {
+  background: linear-gradient(180deg, #5A5E91 0%, #40436C 50%, #313454 100%);
+  border: 3px solid #171827;
+  box-shadow: 
+    inset 0 2px 2px rgba(255, 255, 255, 0.45),
+    0 5px 0 #212338,
+    0 7px 0 #000000,
+    0 8px 14px rgba(0, 0, 0, 0.4);
+  color: #FFFFFF;
+  font-weight: 800;
+  text-transform: uppercase;
+  text-shadow: 0 2px 2px rgba(0, 0, 0, 0.8);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.btn-game-navy:hover {
+  filter: brightness(1.08);
+}
+.btn-game-navy:active {
+  transform: translateY(4px);
+  box-shadow: 
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 1px 0 #212338,
+    0 2px 0 #000000;
+}
+
+/* Energetic Lime Green Button ("VIEW ALL", "CLAIM") */
+.btn-game-green {
+  background: linear-gradient(180deg, #7BE443 0%, #53CE17 50%, #3FA80E 100%);
+  border: 3px solid #143806;
+  box-shadow: 
+    inset 0 2px 2px rgba(255, 255, 255, 0.75),
+    0 5px 0 #2B730A,
+    0 7px 0 #000000,
+    0 10px 16px rgba(43, 115, 10, 0.45);
+  color: #FFFFFF;
+  font-weight: 900;
+  text-transform: uppercase;
+  text-shadow: 0 2px 3px rgba(10, 45, 2, 0.9);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.btn-game-green:hover {
+  filter: brightness(1.06);
+}
+.btn-game-green:active {
+  transform: translateY(4px);
+  box-shadow: 
+    inset 0 1px 2px rgba(255, 255, 255, 0.5),
+    0 1px 0 #2B730A,
+    0 2px 0 #000000;
+}
+
+/* Cobalt Azure Blue Button ("CLOSE", "CONFIRM", Primary Nav) */
+.btn-game-blue {
+  background: linear-gradient(180deg, #3C97FF 0%, #1474E0 50%, #0A55AC 100%);
+  border: 3px solid #062349;
+  box-shadow: 
+    inset 0 2px 2px rgba(255, 255, 255, 0.6),
+    0 5px 0 #073B78,
+    0 7px 0 #000000,
+    0 8px 14px rgba(0, 0, 0, 0.4);
+  color: #FFFFFF;
+  font-weight: 900;
+  text-transform: uppercase;
+  text-shadow: 0 2px 3px rgba(3, 23, 50, 0.85);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.btn-game-blue:hover {
+  filter: brightness(1.08);
+}
+.btn-game-blue:active {
+  transform: translateY(4px);
+  box-shadow: 
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 1px 0 #073B78,
+    0 2px 0 #000000;
+}
+
+/* Tactile Squircle Action Button (Bottom D-pad & Nav: <, >, v, x, ⚙️) */
+.btn-game-squircle {
+  background: linear-gradient(180deg, #3B97FF 0%, #1474E0 50%, #0B53A7 100%);
+  border: 3px solid #062349;
+  border-radius: 18px;
+  box-shadow: 
+    inset 0 2px 2px rgba(255, 255, 255, 0.5),
+    0 4px 0 #073B78,
+    0 6px 0 #000000,
+    0 6px 12px rgba(0, 0, 0, 0.4);
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.btn-game-squircle:hover {
+  filter: brightness(1.1);
+}
+.btn-game-squircle:active {
+  transform: translateY(3px);
+  box-shadow: 
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 1px 0 #073B78,
+    0 2px 0 #000000;
+}
+.btn-game-squircle.active {
+  background: linear-gradient(180deg, #00D2FF 0%, #1474E0 100%);
+  border-color: #BAE6FD;
+  box-shadow: 
+    inset 0 2px 4px rgba(255, 255, 255, 0.7),
+    0 2px 0 #082F49,
+    0 0 14px rgba(0, 210, 255, 0.7);
+}
+
+/* Hexagonal Tactile Button (Shop Stall, Vault Gift, BattlePass Core) */
+.btn-game-hex {
+  position: relative;
+  background: linear-gradient(180deg, #3492FE 0%, #1474E0 55%, #0B54A8 100%);
+  border: 3px solid #08254D;
+  box-shadow: 
+    inset 0 2px 2px rgba(255, 255, 255, 0.55),
+    0 4px 0 #063773,
+    0 6px 0 #000000,
+    0 8px 14px rgba(0, 0, 0, 0.35);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  transition: transform 0.08s ease, filter 0.08s ease;
+}
+.btn-game-hex:active {
+  transform: translateY(3px);
+  filter: brightness(0.95);
+}
+
+/* ========================================================================= */
+/* 2. TOP BAR RESOURCE PILLS & HEX AVATAR (Reference Top Bar)                */
+/* ========================================================================= */
+
+/* Resource Capsule Container (Dark Navy Capsule with inset track & Green +) */
+.pill-resource-container {
+  background: #2E3255;
+  border: 2.5px solid #091224;
+  border-radius: 9999px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6), 0 3px 6px rgba(0, 0, 0, 0.3);
+}
+
+.pill-resource-plus {
+  background: linear-gradient(180deg, #74DF38 0%, #53CE17 60%, #3CA50D 100%);
+  border: 2px solid #0F2E05;
+  box-shadow: 
+    inset 0 1.5px 1.5px rgba(255, 255, 255, 0.7),
+    0 2px 0 #215A07,
+    0 3px 0 #000000;
+  color: #FFFFFF;
+  transition: transform 0.08s ease;
+}
+.pill-resource-plus:active {
+  transform: translateY(2px);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.4), 0 1px 0 #215A07;
+}
+
+/* Hexagonal Commander Avatar Frame (Reference: Blue 3D Hexagon with shine) */
+.hex-profile-frame {
+  position: relative;
+  background: linear-gradient(180deg, #3795FF 0%, #1474E0 60%, #094793 100%);
+  border: 3.5px solid #062349;
+  box-shadow: 
+    inset 0 3px 4px rgba(255, 255, 255, 0.6),
+    0 5px 0 #073B78,
+    0 7px 0 #000000,
+    0 8px 16px rgba(0, 0, 0, 0.4);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+
+/* Rank Pill Badge (Reference: "RANK 00" golden pill) */
+.pill-rank-badge {
+  background: linear-gradient(180deg, #FFE14D 0%, #FAC602 100%);
+  border: 2px solid #0B3367;
+  border-radius: 9999px;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.6), 0 2px 4px rgba(0, 0, 0, 0.3);
+  color: #1A1201;
+  font-weight: 900;
+}
+
+/* Online Status Pill (Reference: "🟢 ONLINE: 00") */
+.pill-online-status {
+  background: #1D213B;
+  border: 2px solid #060D1A;
+  border-radius: 9999px;
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.6);
+  color: #FAC602;
+  font-weight: 900;
+}
+
+/* ========================================================================= */
+/* 3. SEGMENTED TABS (Reference: "DAILY TASKS" / "ADDITIONAL TASKS")           */
+/* ========================================================================= */
+.tab-segmented-container {
+  background: #181B2E;
+  border: 3px solid #060E1C;
+  border-radius: 20px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.7);
+  padding: 3px;
+}
+
+.tab-segmented-active {
+  background: linear-gradient(180deg, #3795FF 0%, #1474E0 60%, #0A55AC 100%);
+  border: 2px solid #052145;
+  border-radius: 16px;
+  box-shadow: 
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.5),
+    0 3px 0 #073B78,
+    0 4px 0 #000000;
+  color: #FFFFFF;
+  font-weight: 900;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.tab-segmented-inactive {
+  color: #555B8A;
+  font-weight: 800;
+  transition: color 0.1s ease;
+}
+.tab-segmented-inactive:hover {
+  color: #8C93C7;
+}
+
+/* ========================================================================= */
+/* 4. CAPSULE PROGRESS BARS (Reference Heart & Progress Bars)                 */
+/* ========================================================================= */
+.capsule-progress-track {
+  background: #181B2F;
+  border: 3px solid #060E1C;
+  border-radius: 9999px;
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.8);
+  position: relative;
+  overflow: hidden;
+}
+
+.capsule-progress-fill-cyan {
+  background: linear-gradient(180deg, #7CE7FF 0%, #00D2FF 40%, #1474E0 100%);
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.8), 0 0 10px rgba(0, 210, 255, 0.7);
+}
+
+.capsule-progress-fill-gold {
+  background: linear-gradient(180deg, #FFF176 0%, #FAC602 45%, #E69B00 100%);
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.8), 0 0 10px rgba(250, 198, 2, 0.7);
+}
+
+.capsule-progress-fill-green {
+  background: linear-gradient(180deg, #A2F377 0%, #53CE17 45%, #35980A 100%);
+  box-shadow: inset 0 2px 2px rgba(255, 255, 255, 0.8), 0 0 10px rgba(83, 206, 23, 0.7);
+}
+
+/* Specular top highlight stripe for glossy progress bar */
+.specular-gloss-stripe {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 100%);
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  right: 3px;
+  height: 40%;
+  border-radius: 9999px;
+  pointer-events: none;
+}
+
+/* ========================================================================= */
+/* 5. COLLECTIBLE RELIC & TOKEN CARDS (Reference: Voider, Zorgon, Nebula)     */
+/* ========================================================================= */
+.card-relic-container {
+  background: linear-gradient(180deg, #1E2342 0%, #161932 60%, #111428 100%);
+  border: 3px solid #0A1021;
+  border-radius: 20px;
+  box-shadow: 
+    inset 0 1px 1px rgba(255, 255, 255, 0.15),
+    0 6px 0 #0B0E1D,
+    0 8px 0 #000000,
+    0 10px 18px rgba(0, 0, 0, 0.5);
+  transition: transform 0.1s ease, filter 0.1s ease;
+}
+.card-relic-container:hover {
+  filter: brightness(1.05);
+}
+
+/* Hex Token Frames (Copper for Zorgon, Silver-Blue for Nebula, Voider Pedestal) */
+.token-frame-zorgon {
+  background: linear-gradient(180deg, #9C522B 0%, #683015 100%);
+  border: 3px solid #F68B3C;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.4), 0 0 12px rgba(246, 139, 60, 0.5);
+}
+
+.token-frame-nebula {
+  background: linear-gradient(180deg, #37538A 0%, #203154 100%);
+  border: 3px solid #84A9FF;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.4), 0 0 12px rgba(132, 169, 255, 0.6);
+}
+
+/* Multiplier Badge ("x2" on Token Cards) */
+.token-multiplier-badge {
+  font-family: 'Fredoka', sans-serif;
+  font-size: 16px;
+  font-weight: 900;
+  color: #FFFFFF;
+  text-shadow: 
+    -1.5px -1.5px 0 #000,
+     1.5px -1.5px 0 #000,
+    -1.5px  1.5px 0 #000,
+     1.5px  1.5px 0 #000,
+     0 3px 0 #000;
+}
+
+/* ========================================================================= */
+/* 6. LEADERBOARD CARD (Reference: StarNovaX #1 Card)                        */
+/* ========================================================================= */
+.card-leaderboard-top {
+  background: linear-gradient(180deg, #A8FCE7 0%, #69E2C6 45%, #42C0A5 100%);
+  border: 3px solid #0E4237;
+  border-radius: 24px;
+  box-shadow: 
+    inset 0 2px 2px rgba(255, 255, 255, 0.7),
+    0 5px 0 #1B584B,
+    0 7px 0 #000000,
+    0 10px 18px rgba(0, 0, 0, 0.4);
+}
+
+/* Golden Ribbon Badge (#1 Medal) */
+.medal-ribbon-gold {
+  background: linear-gradient(180deg, #FFDE43 0%, #FAC602 100%);
+  border: 2.5px solid #140E00;
+  border-radius: 9999px;
+  box-shadow: 
+    inset 0 1px 2px rgba(255, 255, 255, 0.8),
+    0 3px 0 #8B5900,
+    0 4px 0 #000000;
+  color: #FFFFFF;
+  font-weight: 900;
+  text-shadow: 0 1.5px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* Robot Avatar Golden Square Border */
+.avatar-border-gold {
+  background: #171827;
+  border: 3px solid #FAC602;
+  border-radius: 14px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6), 0 0 10px rgba(250, 198, 2, 0.5);
+}
+
+/* Text Stroke / Arcade Drop Shadow Helper */
+.text-stroke-arcade {
+  font-weight: 900;
+  color: #FFFFFF;
+  text-shadow: 
+    -1.5px -1.5px 0 #000,
+     1.5px -1.5px 0 #000,
+    -1.5px  1.5px 0 #000,
+     1.5px  1.5px 0 #000,
+     0 3px 2px rgba(0, 0, 0, 0.8);
+}
+
+/* Modal Backdrop Container */
+.game-modal-backdrop {
+  background: rgba(8, 14, 28, 0.88);
+  backdrop-filter: blur(12px);
+}
+
+.game-dialog-card {
+  background: linear-gradient(180deg, #1C2346 0%, #131732 50%, #0F1227 100%);
+  border: 3.5px solid #070F20;
+  border-radius: 32px;
+  box-shadow: 
+    inset 0 2px 2px rgba(255, 255, 255, 0.25),
+    0 8px 0 #080C1A,
+    0 11px 0 #000000,
+    0 16px 32px rgba(0, 0, 0, 0.75);
+}
+
+/* Retro CRT scanline effect toggle */
+.crt-scanlines {
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%,
+    rgba(0, 0, 0, 0.22) 50%
+  ), linear-gradient(
+    90deg,
+    rgba(255, 0, 0, 0.02),
+    rgba(0, 255, 0, 0.01),
+    rgba(0, 0, 255, 0.02)
+  );
+  background-size: 100% 3px, 6px 100%;
+  pointer-events: none;
+}
+
+/* ========================================================================= */
+/* INCOMING THREAT WARNING & EMERGENCY SIREN EFFECTS                         */
+/* ========================================================================= */
+
+@keyframes hazard-stripe-slide {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 40px 0;
+  }
+}
+
+.hazard-stripe-red {
+  background: repeating-linear-gradient(
+    -45deg,
+    #E62E5C,
+    #E62E5C 12px,
+    #171827 12px,
+    #171827 24px
+  );
+  background-size: 34px 34px;
+  animation: hazard-stripe-slide 0.85s linear infinite;
+}
+
+.hazard-stripe-amber {
+  background: repeating-linear-gradient(
+    -45deg,
+    #FAC602,
+    #FAC602 12px,
+    #171827 12px,
+    #171827 24px
+  );
+  background-size: 34px 34px;
+  animation: hazard-stripe-slide 0.85s linear infinite;
+}
+
+@keyframes threat-siren-strobe {
+  0%, 100% {
+    opacity: 0.18;
+    box-shadow: inset 0 0 35px rgba(230, 46, 92, 0.25);
+  }
+  50% {
+    opacity: 0.88;
+    box-shadow: inset 0 0 75px rgba(230, 46, 92, 0.75), 0 0 40px rgba(230, 46, 92, 0.5);
+  }
+}
+
+.threat-siren-overlay {
+  animation: threat-siren-strobe 0.55s ease-in-out infinite;
+}
+
+@keyframes threat-beacon-flash {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+    filter: drop-shadow(0 0 8px #FF2E63);
+  }
+}
+
+.threat-beacon {
+  animation: threat-beacon-flash 0.4s ease-in-out infinite;
+}
+
+/* Soft breathing halo for the (big) homepage INSTALL APP button — draws
+   the eye without strobing. Borders + outer cyan glow gently swell. */
+@keyframes install-pulse-glow {
+  0%, 100% {
+    box-shadow:
+      0 4px 14px rgba(0, 0, 0, 0.45),
+      0 0 0 rgba(0, 210, 255, 0);
+  }
+  50% {
+    box-shadow:
+      0 4px 18px rgba(0, 0, 0, 0.5),
+      0 0 26px rgba(0, 210, 255, 0.4);
+  }
+}
+
+.animate-pulse-glow {
+  animation: install-pulse-glow 2.6s ease-in-out infinite;
+}
+
+
+/* --- Earth Defender component utilities (previously referenced but undefined) --- */
+
+.earth-card-well {
+  background: linear-gradient(160deg, #0d1b33 0%, #0a1426 100%);
+  border: 2px solid #060d1c;
+  box-shadow:
+    inset 0 1px 0 rgba(148, 197, 255, 0.08),
+    0 4px 10px rgba(0, 0, 0, 0.45);
+}
+
+.earth-light-burst {
+  background: radial-gradient(
+    circle,
+    rgba(0, 210, 255, 0.22) 0%,
+    rgba(2, 24, 61, 0.12) 42%,
+    rgba(0, 0, 0, 0) 70%
+  );
+  filter: blur(2px);
+}
+
+.earth-title-shield {
+  background: linear-gradient(165deg, #0a2a5e 0%, #071a3a 55%, #050f26 100%);
+  border: 2px solid rgba(0, 210, 255, 0.45);
+  box-shadow:
+    0 0 24px rgba(0, 210, 255, 0.25),
+    inset 0 2px 0 rgba(148, 197, 255, 0.15);
+}
+
+.earth-title-text {
+  background: linear-gradient(180deg, #fef3c7 0%, #facc15 45%, #d97706 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.65));
+}
+
+/* ── Story intro cinema layout ──────────────────────────────────────────────
+   The overlay is a SIZE query container (both axes measurable, so cqh works).
+   Portrait / narrow chassis keep the classic stacked flow, with the 320:170
+   illustration capped by a chassis-HEIGHT budget (54cqh) — width alone made
+   the art taller than desktop viewports, which starved the narrative to 0px
+   and pushed the nav buttons below the fold. Wide landscape chassis (desktop
+   monitors, tablets/phones on their side) flip to a two-page spread: art on
+   the left sized by the available height, prose column on the right. */
+.story-ctn-size {
+  container-type: size;
+}
+
+.story-art-frame {
+  width: min(100%, calc(54cqh * 320 / 170));
+}
+
+@container (min-width: 720px) and (min-aspect-ratio: 5/4) {
+  /* Two-page spread: illustration sized by height (never starves the prose),
+     narrative fills the remaining width as a centered reading column. */
+  .story-body {
+    flex-direction: row;
+    justify-content: center;
+    gap: clamp(24px, 4cqw, 72px);
+  }
+  .story-art-frame {
+    width: auto;
+    height: min(100%, 30cqw);
+    align-self: center;
+  }
+  .story-text {
+    min-width: 0;
+    max-width: min(46rem, 46cqw);
+  }
+}

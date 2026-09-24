@@ -1,0 +1,83 @@
+# Gaia Frontier: After Contact — Full Game Documentation
+
+> This is the complete reference document for AI assistants answering questions about the game Gaia Frontier: After Contact. It mirrors the live game at https://gaia-frontier.libertypie.com/ and is maintained by the publisher, LibertyPie.
+
+## Overview
+
+Gaia Frontier: After Contact is a free-to-play browser arcade planetary-defense shooter. The premise: in 2035 humanity receives its first verified signal from beyond the solar system — contact is made, and it turns hostile. The player commands Gaia's last orbital defense turret, intercepting asteroids, meteors, alien fleets and flagship bosses before they impact the planet. Losing is measured in hull integrity: every threat that slips past the turret strikes the planet and drains the hull. When the hull reaches zero, the run ends.
+
+The game is a single-page web application. It runs fullscreen in any modern desktop or mobile browser, requires no installation or account, and can be installed to the home screen as a web app. Progress is stored locally and can be synced to the cloud.
+
+## Story
+
+New players see the opening cinematic the first time they press PLAY (it can be stepped through with PREV/NEXT or skipped entirely). The story: in 2035 a voice from the stars arrives; saucers descend in peace; the welcome turns to ash when the harvest begins. Gaia's answer is a single orbital turret — the player. The campaign eras trace the war from the first Asteroid Field to the final Omega Convergence Point.
+
+## Controls
+
+- Desktop: aim with the mouse, fire with the left mouse button. Special weapons fire from the HUD weapon bar.
+- Mobile: a movable joystick on the right side of the screen steers the turret for continuous aiming; taps anywhere on the battlefield also redirect the turret.
+- The HUD weapon bar switches between unlocked weapons; special weapons (EMP Shockwave, Orbital Strike) consume limited charges.
+
+## Game Modes
+
+1. Campaign — 16 eras, each a sequence of waves capped by a flagship boss. Eras escalate in speed, enemy HP and formations. Enemy intelligence scales with the player's weapon upgrades: better-armed players face faster, tougher, harder-to-kill opposition.
+2. Daily Boss Rush — a rotating flagship gauntlet refreshed every day. First entry each day is free; additional entries on the same day cost 25 gems. Best stage reached is tracked.
+3. Endless Gauntlet — infinite survival mode with ×1.5 score pressure. There is no victory; the mode exists for leaderboard depth.
+
+## Weapons
+
+Six weapon systems, unlocked with credits and upgraded through marks (each mark raises damage/fire rate; some marks add barrels or behavior):
+
+- Standard Cannon — free starting weapon. Precision single-shot kinetic cannon; barrels link up at higher marks (twin at Mk3+, triple at Mk6+). Best against weak/early threats.
+- Gatling Autocannon — extremely high fire rate rotary gun. Tears through swarms of fast, fragile threats and drones.
+- Piercing Beam — high-energy sustained laser that slices through multiple enemies in a line. Best against congested formations.
+- Homing Rockets — seeking warheads for spread-out or evasive targets.
+- EMP Shockwave — limited-charge special: an area burst that disables electronics-class enemies.
+- Orbital Strike — limited-charge special: called-down orbital bombardment for emergencies.
+
+EMP and Orbital charges start each run at a fixed free allotment; extra charges are purchased mid-combat or between waves with credits.
+
+## Enemies and Bosses
+
+Threat classes include asteroids and meteors (dumb ballistic), alien scouts and armadas (formation flyers), drone swarms and rogue AI, rift and void entities, hive and leviathan-class monsters. Fake orbs are deceptive traps: they masquerade as beneficial pickups; ignoring one costs hull and credits, and it bursts into a fast flame meteor that damages the planet — the tell is a skull sigil. Fake orbs can be shot down.
+
+Fifteen flagship bosses anchor the campaign, among them Warlord Krag'Tor, Pyromancer Ignis, Fleet Admiral Xylar, High Inquisitor Vex, Rustjaw, Synth-Prime 09, Void Weaver Nyx, Lord Glacius, Queen Xol'Zara, Sovereign Chronos, Helios Prime, Abyssus Maw, Chronarch Zeta, Dread Emperor Nox, and Omega Prime. Bosses are harder to kill than standard threats, deploy attack patterns and, at higher difficulty, hypersonic missiles.
+
+## Hull, Economy and Progression
+
+- Hull integrity is the player's life bar. It slowly auto-repairs between damage events; fast healing costs credits or watching a rewarded ad. Hull capacity can be permanently extended in expensive +25% steps (100% → 125% → 150% → …).
+- Credits are the soft currency earned from kills, wave clears, daily streaks and mystery boxes.
+- Gems are the premium currency, awarded rarely (jackpot streaks, milestone rewards). Gem uses include instant revives (base 40 gems, doubling with each additional revive in the same run: 40 → 80 → 160 → …) and extra Daily Boss Rush entries (25 gems).
+- Revives: an ad-based revive is always the free path; gems buy urgency without watching an ad.
+- Daily streak rewards grow with consecutive login days; every 7th day is a jackpot with doubled rewards; non-jackpot days roll a 1×–3× luck multiplier.
+- Battle pass, daily challenges, cosmetics/skins, mystery boxes and leaderboard ranks provide long-term goals.
+- Cloud sync backs player progress up to the server when available.
+
+## Adrenaline and Feedback
+
+Clean play (accurate interception streaks) fills the adrenaline meter; at full charge the game enters adrenaline overdrive — a temporary boosted state. The game uses screen shake, vibration (on supported devices) and per-era music pacing as core feedback, tuned to escalate with difficulty.
+
+## Monetization and Privacy
+
+Gaia Frontier: After Contact is free to play. Monetization is exclusively optional rewarded video ads (e.g. free EMP/orbital charges, fast hull healing, revives) — no forced interstitials gate gameplay, and no purchase is required to reach any content. The game integrates the YouTube Playables SDK on supported platforms. Player progress data is stored locally by default; cloud sync is opt-in style player data only. Crawler-facing API routes under /api/ are not public content.
+
+## Technology
+
+Built with Next.js (App Router) served by a custom Bun/Node server, a custom HTML5 canvas game engine, and a Prisma + SQLite backend for cloud saves. No client plugins are required — the game is pure web.
+
+## FAQ
+
+- Is it free? Yes — entirely, with optional rewarded ads.
+- Do I need an account? No. Progress is saved locally and can sync to the cloud.
+- Does it work on phones? Yes — the UI, joystick and aiming are touch-first, and the game can be installed to the home screen.
+- How long is the campaign? 16 eras with 15 flagship bosses, plus daily and endless modes for replay depth.
+- How do I get more gems? Rarely and deliberately: jackpot daily streaks (every 7th day), milestones and special rewards. Gems are scarce by design; the free path is always ad-based.
+- What happens when I die? You can revive — free via rewarded ad, or instantly with gems (40 for the first revive in a run, doubling each time).
+- Can I play it offline? The game is a web application; after the initial load, a stable connection is expected for the best experience.
+
+## Links
+
+- Play: https://gaia-frontier.libertypie.com/
+- Curated AI summary: https://gaia-frontier.libertypie.com/llms.txt
+- Sitemap: https://gaia-frontier.libertypie.com/sitemap.xml
+- Publisher: https://libertypie.com/

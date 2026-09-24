@@ -1,0 +1,66 @@
+{
+  "menu": {
+    "file": "menu",
+    "name": "Deep Defense",
+    "bpm": 146,
+    "loop_s": 72.2,
+    "mode": "menu",
+    "eras": "menu / game over"
+  },
+  "battle1": {
+    "file": "battle1",
+    "name": "Event Horizon",
+    "bpm": 171,
+    "loop_s": 50.4,
+    "mode": "battle",
+    "eras": "eras 1-2"
+  },
+  "battle2": {
+    "file": "battle2",
+    "name": "Neuro Defense",
+    "bpm": 139,
+    "loop_s": 53.3,
+    "mode": "battle",
+    "eras": "eras 3-5"
+  },
+  "battle3": {
+    "file": "battle3",
+    "name": "Voidfront Siege",
+    "bpm": 142,
+    "loop_s": 53.8,
+    "mode": "battle",
+    "eras": "eras 6-8"
+  },
+  "battle4": {
+    "file": "battle4",
+    "name": "Final War Scale",
+    "bpm": 143,
+    "loop_s": 60.5,
+    "mode": "battle",
+    "eras": "eras 9-11"
+  },
+  "battle5": {
+    "file": "battle5",
+    "name": "Neurofunk Rampart",
+    "bpm": 171,
+    "loop_s": 56.0,
+    "mode": "battle",
+    "eras": "eras 12-14"
+  },
+  "battle6": {
+    "file": "battle6",
+    "name": "Final Stand",
+    "bpm": 138,
+    "loop_s": 59.8,
+    "mode": "battle",
+    "eras": "era 15 / Convergence"
+  },
+  "intro": {
+    "file": "intro",
+    "name": "First Contact",
+    "bpm": 73,
+    "loop_s": 13.2,
+    "mode": "intro bridge",
+    "eras": "instant-start bridge until menu/battle theme decodes"
+  }
+}

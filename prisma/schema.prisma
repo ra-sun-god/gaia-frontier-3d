@@ -1,0 +1,43 @@
+// Earth Defender — player progress backend (SQLite via Prisma)
+// One row per player; `data` holds the full serialized save envelope
+// (profile + daily challenges) exactly as the game stores it locally.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  // Unique var name so the sandbox root .env's DATABASE_URL can never
+  // shadow the game's own database location.
+  url      = env("EARTH_DEFENDER_DB")
+}
+
+model Player {
+  // Client-generated stable UUID (crypto.randomUUID), stored in localStorage
+  id String @id
+
+  // Display name for the leaderboard (sanitized, player-settable)
+  name String @default("Commander")
+
+  // Full save envelope: JSON string { v, profile, challenges, savedAt }
+  data String
+
+  // Denormalized summary columns for fast leaderboard queries
+  bestScore   Int @default(0)
+  cash        Int @default(0)
+  gems        Int @default(0)
+  highestWave Int @default(0)
+
+  // Epoch-ms timestamp of the client's last save (last-write-wins arbiter)
+  savedAt BigInt @default(0)
+
+  // Increments on every accepted server write (conflict debugging)
+  revision Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([bestScore(sort: Desc)])
+  @@index([savedAt])
+}

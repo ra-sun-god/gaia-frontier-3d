@@ -1,0 +1,6 @@
+{
+  "name": "Gaia Frontier: After Contact",
+  "description": "Contact was made — and it turned hostile. Defend Gaia against cosmic and alien threats across three cabinets — campaign, daily boss rush and endless gauntlet — with upgradable weapons, elite hunts and adrenaline overdrive.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

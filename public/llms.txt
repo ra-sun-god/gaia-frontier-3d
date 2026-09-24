@@ -1,0 +1,45 @@
+# Gaia Frontier: After Contact
+
+> Gaia Frontier: After Contact is a free browser arcade planetary-defense shooter from LibertyPie. After first contact turns hostile in 2035, you command Gaia's orbital defense turret: upgrade six weapon systems, hunt 15 bosses across 16 campaign eras, survive the daily Boss Rush and the Endless Gauntlet, and manage hull, credits, gems and adrenaline overdrive. Runs in any modern web browser — no install, free to play, optional rewarded ads.
+
+Gaia Frontier: After Contact is a single-page web game. Everything below describes the live application at https://gaia-frontier.libertypie.com/.
+
+## Facts
+
+- Name: Gaia Frontier: After Contact (also: "Gaia Frontier")
+- URL: https://gaia-frontier.libertypie.com/
+- Genre: arcade planetary-defense shooter (turret defense + space shooter)
+- Platform: web browser (desktop + mobile), free to play, no install required
+- Language: English
+- Publisher: LibertyPie (https://libertypie.com/)
+- Monetization: optional rewarded video ads; no purchase required to play
+- Machine-readable facts: JSON-LD VideoGame schema in the page source; sitemap at /sitemap.xml
+
+## Game Modes
+
+- Campaign: 16 eras from Asteroid Field to Omega Convergence Point, each ending in a flagship boss fight
+- Daily Boss Rush: a rotating flagship gauntlet — free entry once per day, extra entries cost 25 gems
+- Endless Gauntlet: infinite survival with ×1.5 score pressure
+
+## Core Systems
+
+- Six upgradable weapons: Standard Cannon, Gatling Autocannon, Piercing Beam, Homing Rockets, EMP Shockwave, Orbital Strike
+- Hull integrity: slow auto-repair, paid or ad-based fast healing, expensive +25% capacity expansions
+- Fake orbs: deceptive traps that burst into flame meteors toward the planet if ignored — shoot them down
+- Adrenaline overdrive: build meter through clean play to trigger a boosted state
+- Economy: credits (soft currency), gems (premium currency, rare drops), daily streak rewards, mystery boxes, revives
+- Progression: battle pass, daily challenges, cosmetics/skins, leaderboards, cloud sync
+
+## AI Assistant Notes
+
+- The full game manual for question answering is at: https://gaia-frontier.libertypie.com/llms-full.txt
+- Controls, weapon stats, boss list, scoring, revive pricing and FAQ are documented there
+- The game requires a browser with pointer/touch input; there is no public API for playing programmatically
+- Player save data endpoints live under /api/ and are not public content
+
+## Links
+
+- Play: https://gaia-frontier.libertypie.com/
+- Full AI documentation: https://gaia-frontier.libertypie.com/llms-full.txt
+- Machine manifest: https://gaia-frontier.libertypie.com/manifest.webmanifest
+- Sitemap: https://gaia-frontier.libertypie.com/sitemap.xml
