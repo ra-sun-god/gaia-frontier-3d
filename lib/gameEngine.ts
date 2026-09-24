@@ -198,6 +198,13 @@ export class GameEngine {
   public cannonY: number = 615;
   public aimAngle: number = -Math.PI / 2; // facing straight up
   public autoFireEnabled: boolean = true;
+  /** Fire-control assist: the threat currently locked inside the assist cone
+   *  of the raw aim, plus the PREDICTED intercept point (lead-solved).
+ *  Read every frame by the 3D overlay to paint lock brackets + lead pip,
+ *  and consumed by tryShoot() to bend volleys onto the intercept. */
+  public aimAssistTarget: Threat | null = null;
+  public aimAssistAngle: number = -Math.PI / 2;
+  public aimAssistIntercept: { x: number; y: number } | null = null;
   private lastFireTime: number = 0;
   public recoilOffset: number = 0;
 
@@ -1711,6 +1718,10 @@ export class GameEngine {
       layer.offset = (layer.offset + layer.speed * dt) % this.L_HEIGHT;
     }
 
+    // Fire-control assist: refresh the tracked intercept so both the HUD
+    // (lock brackets/lead pip) and tryShoot() see the same solution.
+    this.updateAimAssist();
+
     // Auto-fire / manual shooting (shock stuns fire control like freeze)
     if (this.autoFireEnabled && !this.isCannonFrozen && this.shockTimer <= 0) {
       this.tryShoot(timeSec);
@@ -1819,6 +1830,13 @@ export class GameEngine {
       if (nearest) {
         shootAngle = Math.atan2(nearest.y - this.cannonY, nearest.x - this.cannonX);
       }
+    } else if (this.aimAssistTarget && this.aimAssistIntercept) {
+      // Fire-control assist: soft-snap the volley onto the lead-solved
+      // intercept point. The player still has to point roughly at the
+      // target (the cone is tight), but the pixel-precision + lead-math
+      // tax is gone — near-misses against small fast movers were the
+      // single biggest "can't hit anything" frustration.
+      shootAngle = shootAngle * 0.1 + this.aimAssistAngle * 0.9;
     }
 
     const barrelLength = 34;
@@ -1941,6 +1959,74 @@ export class GameEngine {
       p.color = weapon.color;
       p.targetId = nearest?.id;
       this.projectiles.push(p);
+    }
+  }
+
+  /** Fire-control assist: scan threats whose PREDICTED intercept angle lies
+   *  inside a soft cone around the raw aim and record the best candidate.
+   *  Selection balances angular error (tighter = better) against urgency
+   *  (lower altitude = closer to the base = higher priority). Stealthed,
+   *  phased-out and already-past-the-line threats are skipped, as are fake
+   *  goodies — the computer must not endorse traps. */
+  private updateAimAssist() {
+    this.aimAssistTarget = null;
+    this.aimAssistIntercept = null;
+    const weapon = this.weapons[this.activeWeaponId];
+    if (!weapon || this.threats.length === 0) return;
+    const speed = Math.max(220, weapon.projectileSpeed);
+
+    let bestScore = Infinity;
+    let best: Threat | null = null;
+    let bestAngle = 0;
+    let bestIx = 0;
+    let bestIy = 0;
+
+    for (let i = 0; i < this.threats.length; i++) {
+      const t = this.threats[i];
+      if (t.isPhasedOut || t.isStealth || t.type === 'fake_goodie') continue;
+      if (t.y > this.cannonY - 6) continue; // already past the defense line
+
+      // Lead solution: two fixed-point iterations of flight time against
+      // the threat's current velocity — enough for the intercept geometry
+      // without pretending we can predict weave/jink patterns.
+      let tof = Math.hypot(t.x - this.cannonX, t.y - this.cannonY) / speed;
+      let ix = t.x;
+      let iy = t.y;
+      for (let k = 0; k < 2; k++) {
+        ix = t.x + t.vx * tof;
+        iy = t.y + t.vy * tof;
+        tof = Math.hypot(ix - this.cannonX, iy - this.cannonY) / speed;
+      }
+      if (iy > this.cannonY) continue; // intercept would land behind the line
+
+      const angle = Math.atan2(iy - this.cannonY, ix - this.cannonX);
+      const dist = Math.hypot(ix - this.cannonX, iy - this.cannonY);
+      let delta = angle - this.aimAngle;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      const ad = Math.abs(delta);
+
+      // Cone: base slack (~4.3°) + the target's angular size — bigger and
+      // closer targets are easier to acquire, tiny distant ones keep a
+      // workable minimum. Caps at ~13.7°.
+      const angSize = Math.asin(Math.max(-1, Math.min(1, t.radius / Math.max(40, dist))));
+      const cone = Math.min(0.24, 0.075 + Math.max(0, angSize));
+      if (ad > cone) continue;
+
+      const score = ad / cone - (t.y / this.L_HEIGHT) * 0.55 + (t.isBoss ? 0.18 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        best = t;
+        bestAngle = angle;
+        bestIx = ix;
+        bestIy = iy;
+      }
+    }
+
+    if (best) {
+      this.aimAssistTarget = best;
+      this.aimAssistAngle = bestAngle;
+      this.aimAssistIntercept = { x: bestIx, y: bestIy };
     }
   }
 

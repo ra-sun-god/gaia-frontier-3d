@@ -1,19 +1,22 @@
 // lib/three/world.ts — Three.js presentation layer for Gaia Frontier.
 //
 // The 2D gameEngine keeps simulating in its logical (x, y) space; this world
-// maps that plane into a tilted 3D battlefield (screen-up = into the distance)
-// and paints the same entities with real meshes, lighting and depth.
+// maps that plane onto a VERTICAL battlefield wall rising from the defense
+// line into the sky, and paints the same entities with real meshes, lighting
+// and depth.
 //
 // Mapping contract (kept EXACT so aim/hit-tests stay fair):
 //   world.x = logical.x - L_WIDTH/2
-//   world.z = L_HEIGHT/2 - logical.y
-//   entities live on the gameplay plane y = PLAY_Y (bobbing ±small),
-//   pointer input is ray-cast against that same plane (screenToLogical).
+//   world.y = L_HEIGHT/2 - logical.y        (logical-up = world-up)
+//   world.z = depthOf(logical.y)            (high altitude sits deeper into
+//                                            the sky — approach parallax)
+//   pointer input is ray-cast against the z=0 wall plane (screenToLogical).
 //
-// Scene concept — "the last orbital battery over Earth":
-//   a holographic defense-grid corridor floats above the planet; the hero
-//   railcannon and the Gaia citadel sit on its near deck, and incoming waves
-//   descend from deep space toward Earth's glowing limb at the far horizon.
+// Scene concept — "the last defense battery of Earth":
+//   the camera hovers just below the defense line and is tilted UP into the
+//   sky the invaders descend from. The hero railcannon and the Gaia citadel
+//   guard the bottom of the frame; Earth's glowing limb curves along the
+//   bottom edge beneath them; nebulae and stars fill the sky above.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -30,7 +33,15 @@ import {
   glowSprite,
 } from './enemyMeshes';
 
-const PLAY_Y = 42;
+// Entity lanes: slight z offsets off the gameplay wall so sprites, shots
+// and the hologram never z-fight.
+const LANE_HOLO = -64;   // defense-grid hologram (behind everything)
+const LANE_SHOT = 8;    // player projectiles
+const LANE_THREAT = 14; // hostiles (halo sprite sits a bit further back)
+const LANE_GOODIE = 20; // pickups
+const LANE_TEXT = 34;   // floating combat text
+const DEFENSE_Z = 20;   // turret / citadel plane (just in front of the wall)
+const PLATFORM_Z = 52;  // Gaia citadel platform
 const MAX_PARTICLES = 520;
 const MAX_COMETS = 24;
 
@@ -71,6 +82,9 @@ export interface WorldState {
   maxBaseHp: number;
   currentShieldHp: number;
   skinColors: { cannon: string; base: string; projectile: string };
+  /** Fire-control assist readout (see GameEngine.updateAimAssist). */
+  aimAssistTarget: Threat | null;
+  aimAssistIntercept: { x: number; y: number } | null;
 }
 
 const worldRegistry = new WeakMap<HTMLCanvasElement, ThreeWorld>();
@@ -109,10 +123,11 @@ export class ThreeWorld {
   private cssH = 800;
   private quality = 0;
 
-  // Camera choreography
-  private camBasePos = new THREE.Vector3(0, 600, -700);
-  private camTarget = new THREE.Vector3(0, PLAY_Y * 0.35, 0);
+  // Camera choreography — rig hovers below/behind the defense line, aimed up.
+  private camBasePos = new THREE.Vector3(0, -350, -800);
+  private camTarget = new THREE.Vector3(0, 0, 0);
   private aimLean = 0;
+  private aimRise = 0;
 
   // Post pipeline
   private composer!: EffectComposer;
@@ -141,9 +156,11 @@ export class ThreeWorld {
 
   // Turret
   private turretGroup: THREE.Group | null = null;
+  private turretHead: THREE.Group | null = null;
   private turretBarrel: THREE.Group | null = null;
   private muzzle: THREE.Sprite | null = null;
   private turretColor = '';
+  private tmpV = new THREE.Vector3();
 
   // Entity pools
   private threatMeshes = new Map<number, THREE.Group>();
@@ -174,6 +191,12 @@ export class ThreeWorld {
   private vignetteKey = '';
   private vignetteGrad: CanvasGradient | null = null;
 
+  // Hit-confirm markers: hp snapshots per threat id feed a short-lived list
+  // of impact points rendered as crisp X ticks on the overlay — instant
+  // "that connected" feedback that particles alone don't deliver.
+  private hpSnapshot = new Map<number, number>();
+  private hitMarkers: { x: number; y: number; z: number; t: number }[] = [];
+
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -184,8 +207,11 @@ export class ThreeWorld {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 10, 12000);
-    this.scene.fog = new THREE.Fog('#050b14', 500, 2600);
+    this.camera = new THREE.PerspectiveCamera(52, 1, 10, 12000);
+    // Fog band starts far behind the battlefield: the action band stays
+    // crisp (distant enemies must remain easy to spot), while the void-fog
+    // power still blankets the sky when a void cruiser shrouds the field.
+    this.scene.fog = new THREE.Fog('#050b14', 2400, 5600);
 
     // HDR post pipeline: scene → UnrealBloom → ACES/sRGB output. The MSAA
     // render target keeps edges clean now that the canvas is no longer the
@@ -203,6 +229,15 @@ export class ThreeWorld {
     this.fitCamera();
     this.layoutFurniture();
     this.startIdleLoop();
+
+    // QA/debug handle (window.__earthDefender.world), mirroring the engine's
+    // qaSpawn handle: lets a harness inspect camera/world state live.
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __earthDefender: Record<string, unknown> })
+        .__earthDefender ??= { };
+      (window as unknown as { __earthDefender: Record<string, unknown> })
+        .__earthDefender.world = this;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -210,23 +245,23 @@ export class ThreeWorld {
   // -------------------------------------------------------------------------
 
   private buildWorld() {
-    // Lighting: warm key from the distant sun (upper-left, matches the sun
-    // sprite), cyan earthshine bounce from the planet below, soft sky fill.
-    this.hemiLight = new THREE.HemisphereLight('#7dd3fc', '#0b1220', 0.85);
+    // Lighting: warm key from the sun hanging in the upper-left sky, cyan
+    // earthshine bouncing UP off the planet below (lights hostile bellies
+    // and the citadel's underside), soft sky fill from above.
+    this.hemiLight = new THREE.HemisphereLight('#7dd3fc', '#0e2a3f', 0.85);
     this.scene.add(this.hemiLight);
-    // The sun stays warm-white year-round: the planet must read as a bright
-    // "Blue Marble". (It used to inherit the era's ambientGlow — a dark
-    // saturated blue that drowned the whole disk during gameplay.)
+    // The sun stays warm-white year-round — the planet must read as a bright
+    // "Blue Marble".
     this.keyLight = new THREE.DirectionalLight('#fff3e0', 2.4);
-    this.keyLight.position.set(-2300, 1900, 2900);
+    this.keyLight.position.set(-1400, 2300, 900);
     this.scene.add(this.keyLight);
-    // Camera-side photographic fill so the visible disk never goes pitch
-    // dark regardless of which longitude rotates into view.
-    const earthFill = new THREE.DirectionalLight('#a8c8ff', 0.6);
-    earthFill.position.set(400, 1500, -900);
-    this.scene.add(earthFill);
-    const earthshine = new THREE.DirectionalLight('#38bdf8', 0.45);
-    earthshine.position.set(150, -900, 400);
+    // Camera-side fill so nothing in the action band goes pitch dark.
+    const frontFill = new THREE.DirectionalLight('#a8c8ff', 0.55);
+    frontFill.position.set(300, 500, -900);
+    this.scene.add(frontFill);
+    // Earthshine: the planet's glow rises from below the defense line.
+    const earthshine = new THREE.DirectionalLight('#38bdf8', 0.5);
+    earthshine.position.set(0, -900, 300);
     this.scene.add(earthshine);
 
     // Deep-space dressing. Every material here opts out of scene fog — the
@@ -240,14 +275,17 @@ export class ThreeWorld {
     this.sun = buildSun();
     this.scene.add(this.sun);
 
-    // Holographic defense-grid corridor (replaces the old GridHelper floor).
+    // Holographic defense-grid corridor — a faint vertical holo wall the
+    // invaders descend through. Deliberately LOW contrast inside the action
+    // band: the grid must never compete with hostile silhouettes.
     this.corridorMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
+      side: THREE.DoubleSide,
       uniforms: {
         uTint: { value: new THREE.Color('#67e8f9') },
         uTime: { value: 0 },
-        uSize: { value: new THREE.Vector2(630, 1120) },
+        uSize: { value: new THREE.Vector2(675, 1056) },
         uPlay: { value: new THREE.Vector2(450, 800) },
       },
       vertexShader: `
@@ -264,31 +302,27 @@ export class ThreeWorld {
         varying vec2 vUv;
         void main() {
           vec2 p = (vUv - 0.5) * uSize;
-          // minor 56u grid + major 280u grid
-          vec2 g1 = abs(fract(p / 56.0) - 0.5);
-          float minor = 1.0 - smoothstep(0.0, 0.06, min(g1.x, g1.y));
-          vec2 g2 = abs(fract(p / 280.0) - 0.5);
-          float major = 1.0 - smoothstep(0.0, 0.022, min(g2.x, g2.y));
+          // altitude rungs (horizontal, every 64u) + faint vertical lanes
+          float rung = 1.0 - smoothstep(0.0, 0.05, abs(fract(p.y / 64.0) - 0.5));
+          float lane = 1.0 - smoothstep(0.0, 0.028, abs(fract(p.x / 56.0) - 0.5));
           // fade to nothing beyond the playfield rect
           vec2 q = abs(p) - uPlay * 0.5;
           float fade = 1.0 - smoothstep(0.0, uPlay.x * 0.42, max(q.x, q.y));
-          // corridor boundary rails at the playfield edges (subtle hint —
-          // bright rails read as harsh glare columns on portrait screens)
-          float edge = smoothstep(48.0, 5.0, abs(abs(p.x) - uPlay.x * 0.5)) * 0.5;
-          // radar sweep running far -> near
-          float sp = fract(uTime * 0.1);
-          float band = exp(-pow((vUv.y - (0.96 - sp * 0.92)) * 10.0, 2.0)) * 0.22;
-          // far-edge melt into the planet haze
-          float farFade = 1.0 - smoothstep(0.78, 1.0, vUv.y);
-          float a = fade * farFade * (0.2 + minor * 0.26 + major * 0.24 + edge * 0.4 + band);
-          vec3 col = uTint * (0.22 + minor * 0.38 + major * 0.42 + edge * 0.22)
-                   + vec3(0.8) * band;
+          // corridor boundary rails at the playfield side edges (the
+          // bounce walls — real gameplay information, worth the brightness)
+          float rail = smoothstep(42.0, 4.0, abs(abs(p.x) - uPlay.x * 0.5)) * 0.55;
+          // radar sweep climbing from the defense line into the sky
+          float sp = fract(uTime * 0.085);
+          float band = exp(-pow((vUv.y - (0.10 + sp * 0.86)) * 11.0, 2.0)) * 0.16;
+          // melt into open sky at the top, into the planetary haze below
+          float topFade = 1.0 - smoothstep(0.68, 0.97, vUv.y);
+          float botFade = smoothstep(0.015, 0.16, vUv.y);
+          float a = fade * topFade * botFade * (0.10 + rung * 0.13 + lane * 0.045 + rail * 0.5 + band);
+          vec3 col = uTint * (0.20 + rung * 0.30 + lane * 0.10 + rail * 0.30) + vec3(0.8) * band;
           gl_FragColor = vec4(col, a);
         }`,
     });
     this.corridor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.corridorMat);
-    this.corridor.rotation.x = -Math.PI / 2;
-    this.corridor.position.y = -0.6;
     this.scene.add(this.corridor);
 
     // Gaia citadel platform + atmospheric shield (bottom of the field)
@@ -341,8 +375,20 @@ export class ThreeWorld {
     this.scene.add(this.muzzleLight);
     // Platform floodlight: keeps the hero cannon + citadel out of silhouette
     // at the near end of the field (they sit far from the key light).
-    this.platformFlood = new THREE.PointLight('#cfe4ff', 26000, 700, 2);
+    this.platformFlood = new THREE.PointLight('#cfe4ff', 38000, 780, 2);
     this.scene.add(this.platformFlood);
+
+    // Hero cannon on the menu too: pre-build the turret at its default skin
+    // so the attract-mode framing already sells "the last defense battery".
+    // syncTurret() rebuilds it the moment gameplay starts if the player's
+    // skin differs (turretColor mismatch path).
+    const built = buildTurret('#38bdf8');
+    this.turretGroup = built.group;
+    this.turretHead = built.head;
+    this.turretBarrel = built.barrel;
+    this.muzzle = built.muzzle;
+    this.turretColor = '#38bdf8';
+    this.scene.add(this.turretGroup);
   }
 
   private buildPlatform(): THREE.Group {
@@ -493,7 +539,6 @@ export class ThreeWorld {
           toneMapped: false,
         })
       );
-      ring.rotation.x = -Math.PI / 2;
       ring.visible = false;
       this.scene.add(ring);
       this.telegraphRings.push(ring);
@@ -545,39 +590,55 @@ export class ThreeWorld {
     this.layoutFurniture();
   }
 
-  /** Place the platform, corridor and — critically — frame the Earth's limb
-   *  inside the sky band between the top screen edge and the corridor's far
-   *  melt line. Solving the limb height from the fitted camera keeps the
-   *  horizon framed correctly across portrait and landscape pitches. */
+  /** Place the citadel, corridor and — critically — solve Earth's limb to
+   *  curve through the BOTTOM band of the frame: the camera looks up into
+   *  the sky, so the planet hangs beneath the defense line like a glowing
+   *  shield, its atmosphere rim facing the action. All positions derive
+   *  from the fitted camera, so portrait and landscape stay framed. */
   private layoutFurniture() {
-    const bz = -this.LH / 2 + 24;
-    this.platformGroup.position.set(0, 0, bz);
-    this.shieldDome.position.set(0, 8, bz + 26);
-    this.platformFlood.position.set(0, 210, bz + 64);
+    const defY = this.wy(this.LH - 185); // defense line (cannon altitude)
 
-    const w = this.LW * 1.4;
-    const d = this.LH * 1.4;
-    this.corridor.scale.set(w, d, 1);
-    this.corridorMat.uniforms.uSize.value.set(w, d);
+    // Gaia citadel platform: floats just below the defense line, slightly
+    // in front of the wall so the hero cannon reads as standing on its deck.
+    this.platformGroup.position.set(0, defY - 34, PLATFORM_Z);
+    this.platformGroup.scale.setScalar(1.35);
+    this.shieldDome.position.set(0, defY - 26, PLATFORM_Z);
+    this.shieldDome.scale.setScalar(0.78);
+    // Floodlight: keeps the cannon + citadel out of silhouette from the
+    // camera's low vantage point.
+    this.platformFlood.position.set(0, defY + 130, -80);
+    this.platformFlood.distance = 760;
+
+    // Vertical holo corridor centered on the gameplay wall.
+    const w = this.LW * 1.5;
+    const h = this.LH * 1.32;
+    this.corridor.position.set(0, this.LH * 0.02, LANE_HOLO);
+    this.corridor.scale.set(w, h, 1);
+    this.corridorMat.uniforms.uSize.value.set(w, h);
     this.corridorMat.uniforms.uPlay.value.set(this.LW, this.LH);
 
     // --- Earth framing ------------------------------------------------------
+    // Solve the sphere so its silhouette (limb) appears at a fixed fraction
+    // up from the bottom edge of the frame. Tangency: a ray from the camera
+    // at elevation `limbAngle` grazes the sphere of radius EARTH_R whose
+    // center sits `limbZ` ahead. Solved for center.y:
+    //   u = (w·sin(limbAngle) − R) / cos(limbAngle),  w = limbZ − cam.z
     const cam = this.camBasePos;
-    // Camera looks from behind/above toward +z; the positive look-ahead
-    // distance is target.z - cam.z (cam.z is the negative side).
-    const pitch = Math.atan2(cam.y - this.camTarget.y, Math.max(1, this.camTarget.z - cam.z));
     const fovHalf = THREE.MathUtils.degToRad(this.camera.fov / 2);
-    const topAngle = pitch - fovHalf;
-    const farZ = this.LH * 0.7;
-    const farAngle = Math.atan2(cam.y + 1, Math.max(1, farZ - cam.z));
-    const limbAngle = topAngle + (farAngle - topAngle) * 0.42;
-    const earthZ = this.LH * 1.2;
-    const limbY = cam.y - Math.tan(limbAngle) * (earthZ - cam.z);
-    this.earth?.group.position.set(0, limbY - this.EARTH_R, earthZ);
+    const pitch = Math.atan2(this.camTarget.y - cam.y, Math.max(1, this.camTarget.z - cam.z));
+    // Limb at ~17% up from the bottom edge of the view.
+    const limbAngle = pitch - fovHalf + 2 * fovHalf * 0.17;
+    const limbZ = this.LH * 1.75;
+    const wRay = limbZ - cam.z;
+    // cam.y + u is the sphere CENTER height (the tangent solve is against
+    // the center — the group origin IS the center, no radius offset).
+    const u = (wRay * Math.sin(limbAngle) - this.EARTH_R) / Math.cos(limbAngle);
+    this.earth?.group.position.set(0, cam.y + u, limbZ);
 
-    // --- Sun: hover just above the limb, left of center --------------------
-    const el = Math.max(0.05, limbAngle - 0.05);
-    const az = -0.62;
+    // --- Sun: hang in the upper-left sky so the key light rakes the
+    //     invaders from above-left and kisses the planet's limb. ----------
+    const el = Math.max(0.12, pitch + fovHalf * 0.55);
+    const az = -0.58;
     const dist = 3800;
     this.sun.position.set(
       cam.x + dist * Math.cos(el) * Math.sin(az),
@@ -587,40 +648,50 @@ export class ThreeWorld {
     this.keyLight.position.copy(this.sun.position);
   }
 
-  /** Iteratively fit the tilted camera so the whole play rect stays on screen. */
+  /** Iteratively fit the upward-facing camera so the action band (spawn
+   *  depth up top, citadel at the bottom) stays on screen. The rig sits
+   *  below and behind the defense line, aimed UP into the sky. */
   private fitCamera() {
     const aspect = this.cssW / this.cssH;
     this.camera.aspect = aspect;
-    const pitchDeg = aspect < 0.8 ? 42 : aspect < 1.35 ? 48 : 54;
-    const pitch = THREE.MathUtils.degToRad(pitchDeg);
-    const dir = new THREE.Vector3(0, Math.sin(pitch), -Math.cos(pitch));
+    this.camera.fov = aspect < 0.8 ? 52 : aspect < 1.35 ? 48 : 46;
+    this.camera.updateProjectionMatrix();
+    // Upward tilt of the rig: steeper on portrait (tall corridor), gentler
+    // on widescreen so the horizon keeps some presence.
+    const tiltDeg = aspect < 0.8 ? 27 : aspect < 1.35 ? 21 : 16;
+    const tilt = THREE.MathUtils.degToRad(tiltDeg);
+    // Direction from look-target back to the camera: below + behind.
+    const dir = new THREE.Vector3(0, -Math.sin(tilt), -Math.cos(tilt));
 
-    this.camTarget.set(0, PLAY_Y * 0.35, this.LH * 0.04);
-    const hw = this.LW / 2;
-    const hh = this.LH / 2;
-    const corners = [
-      new THREE.Vector3(-hw, PLAY_Y, -hh),
-      new THREE.Vector3(hw, PLAY_Y, -hh),
-      new THREE.Vector3(-hw, PLAY_Y, hh),
-      new THREE.Vector3(hw, PLAY_Y, hh),
-      new THREE.Vector3(-hw, PLAY_Y + 90, -hh),
-      new THREE.Vector3(hw, PLAY_Y + 90, -hh),
-      new THREE.Vector3(0, PLAY_Y + 110, hh),
-      new THREE.Vector3(0, 0, -hh - 120),
+    this.camTarget.set(0, this.LH * 0.05, 0);
+    const defY = this.wy(this.LH - 185);
+    const hw = Math.min(this.LW / 2, 380);
+    const probes = [
+      // deep top corners — spawn band sits ~170u into the sky
+      new THREE.Vector3(-hw, this.wy(-60), -170),
+      new THREE.Vector3(hw, this.wy(-60), -170),
+      // deep volley spawns (hypersonic stacks start even higher)
+      new THREE.Vector3(-hw * 0.7, this.wy(-130), -205),
+      new THREE.Vector3(hw * 0.7, this.wy(-130), -205),
+      // bottom of the citadel platform
+      new THREE.Vector3(-hw, defY - 70, PLATFORM_Z),
+      new THREE.Vector3(hw, defY - 70, PLATFORM_Z),
+      // turret muzzle at max elevation (straight up)
+      new THREE.Vector3(0, defY + 150, DEFENSE_Z),
     ];
 
-    let R = Math.max(this.LH, this.LW) * 1.15;
+    let R = Math.max(this.LH, this.LW) * 0.95;
     const v = new THREE.Vector3();
-    for (let iter = 0; iter < 30; iter++) {
+    for (let iter = 0; iter < 34; iter++) {
       this.camera.position.copy(this.camTarget).addScaledVector(dir, R);
       this.camera.lookAt(this.camTarget);
       this.camera.updateMatrixWorld();
       let maxNdc = 0;
-      for (const c of corners) {
+      for (const c of probes) {
         v.copy(c).project(this.camera);
         maxNdc = Math.max(maxNdc, Math.abs(v.x), Math.abs(v.y));
       }
-      if (maxNdc > 0.94) R *= 1.045;
+      if (maxNdc > 0.95) R *= 1.045;
       else if (maxNdc < 0.86) R *= 0.965;
       else break;
     }
@@ -642,11 +713,18 @@ export class ThreeWorld {
   private wx(lx: number) {
     return lx - this.LW / 2;
   }
-  private wz(ly: number) {
+  private wy(ly: number) {
     return this.LH / 2 - ly;
   }
+  /** High-altitude entities sit deeper into the sky (negative z): the
+   *  invaders visibly TOWARD the camera as they descend the top third of
+   *  the corridor — cheap, deterministic approach parallax. */
+  private depthOf(ly: number) {
+    return -clamp((this.LH * 0.34 - ly) * 0.62, 0, 205);
+  }
 
-  /** Pointer → logical coords (exact inverse of the current camera projection). */
+  /** Pointer → logical coords (exact inverse of the current camera projection).
+   *  The ray hits the vertical gameplay wall (z = 0). */
   screenToLogical(clientX: number, clientY: number, rect: DOMRect): { x: number; y: number } {
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1,
@@ -654,14 +732,14 @@ export class ThreeWorld {
     );
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(ndc, this.camera);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -PLAY_Y);
+    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     const hit = new THREE.Vector3();
     if (!raycaster.ray.intersectPlane(plane, hit)) {
       return { x: this.LW / 2, y: 0 };
     }
     return {
       x: clamp(hit.x + this.LW / 2, -40, this.LW + 40),
-      y: clamp(this.LH / 2 - hit.z, -60, this.LH + 40),
+      y: clamp(this.LH / 2 - hit.y, -60, this.LH + 40),
     };
   }
 
@@ -754,19 +832,23 @@ export class ThreeWorld {
       this.hemiLight.color.setStyle(era.palette.starsColor || '#7dd3fc');
       this.corridorMat.uniforms.uTint.value.setStyle(era.palette.starsColor || '#67e8f9');
     }
-    fog.near = state.voidFogTimer > 0 ? 240 : 500;
-    fog.far = state.voidFogTimer > 0 ? 1500 : 2600;
+    fog.near = state.voidFogTimer > 0 ? 900 : 2400;
+    fog.far = state.voidFogTimer > 0 ? 2200 : 5600;
     this.keyLight.intensity = overdrive ? 3.0 : 2.4;
     this.hemiLight.intensity = overdrive ? 1.15 : 0.85;
   }
 
   private syncCamera(state: WorldState) {
     this.camera.position.copy(this.camBasePos);
-    // Subtle parallax lean toward the aim point — keeps the 3D feel alive.
+    // Parallax response to the aim: lateral lean toward the point, plus a
+    // subtle vertical rise when the barrel climbs — keeps the 3D alive.
     const aimX = state.cannonX + Math.cos(state.aimAngle) * 220;
-    const leanTarget = this.wx(aimX) * 0.055;
+    const leanTarget = this.wx(aimX) * 0.05;
     this.aimLean += (leanTarget - this.aimLean) * 0.06;
+    const riseTarget = (state.aimAngle + Math.PI / 2) * 30;
+    this.aimRise += (riseTarget - this.aimRise) * 0.05;
     this.camera.position.x += this.aimLean;
+    this.camera.position.y += this.aimRise;
     if (state.screenShake > 0) {
       const s = state.screenShake * 0.65;
       this.camera.position.x += (Math.random() - 0.5) * s;
@@ -775,7 +857,7 @@ export class ThreeWorld {
     }
     this.camera.lookAt(
       this.camTarget.x + this.aimLean * 0.4,
-      this.camTarget.y,
+      this.camTarget.y + this.aimRise * 0.5,
       this.camTarget.z
     );
     this.camera.updateMatrixWorld();
@@ -786,19 +868,26 @@ export class ThreeWorld {
       if (this.turretGroup) this.destroy(this.turretGroup);
       const built = buildTurret(state.skinColors.cannon);
       this.turretGroup = built.group;
+      this.turretHead = built.head;
       this.turretBarrel = built.barrel;
       this.muzzle = built.muzzle;
       this.turretColor = state.skinColors.cannon;
       this.scene.add(this.turretGroup);
     }
-    this.turretGroup.position.set(this.wx(state.cannonX), 0, this.wz(state.cannonY));
-    if (this.turretBarrel) {
-      // aimAngle: -PI/2 = straight up-field. Logical (cos a, sin a) → world (cos a, -sin a).
-      const yaw = Math.atan2(Math.cos(state.aimAngle), -Math.sin(state.aimAngle));
-      this.turretBarrel.rotation.y = yaw;
+    const defY = this.wy(state.cannonY);
+    this.turretGroup.position.set(this.wx(state.cannonX), defY + 6, DEFENSE_Z);
+    if (this.turretHead && this.turretBarrel) {
+      const a = state.aimAngle; // [-0.91π, -0.09π] — upper hemisphere
+      // Yaw: heading around the vertical; atan2(x, small ε) keeps the slew
+      // continuous through the straight-up singularity.
+      this.turretHead.rotation.y = Math.atan2(Math.cos(a), 0.16);
+      // Elevation: barrel pitches up the wall (aimAngle -π/2 = straight up).
+      const elev = Math.asin(clamp(-Math.sin(a), -1, 1));
+      this.turretBarrel.rotation.x = -elev;
+      // Recoil: kick back along the barrel axis.
       const recoil = clamp(state.recoilOffset, 0, 8);
-      this.turretBarrel.position.z = -recoil * 1.6;
-      this.turretBarrel.position.y = 22 - recoil * 0.35;
+      this.turretBarrel.position.y = 22 - Math.sin(elev) * recoil * 1.5;
+      this.turretBarrel.position.z = -Math.cos(elev) * recoil * 1.5;
       if (this.muzzle) {
         const flashing = recoil > 0.4;
         const mat = this.muzzle.material as THREE.SpriteMaterial;
@@ -813,14 +902,17 @@ export class ThreeWorld {
           (c.material as THREE.MeshStandardMaterial).emissiveIntensity = heat;
         }
       }
-      // Muzzle flash point light (physical units: candela with decay²).
-      this.muzzleLight.position.set(
-        this.wx(state.cannonX) + Math.sin(yaw) * 58,
-        30,
-        this.wz(state.cannonY) + Math.cos(yaw) * 58
-      );
-      this.muzzleLight.intensity = recoil > 0.05 ? Math.min(52000, recoil * 9000) : 0;
     }
+    // Muzzle flash point light at the true barrel tip (physical units).
+    this.turretGroup.updateMatrixWorld(true);
+    if (this.muzzle) {
+      this.muzzle.getWorldPosition(this.tmpV);
+      this.muzzleLight.position.copy(this.tmpV);
+    } else {
+      this.muzzleLight.position.set(this.wx(state.cannonX), this.wy(state.cannonY) + 60, DEFENSE_Z);
+    }
+    this.muzzleLight.intensity =
+      state.recoilOffset > 0.05 ? Math.min(52000, state.recoilOffset * 9000) : 0;
   }
 
   private syncThreats(state: WorldState, timeSec: number, dt: number) {
@@ -832,21 +924,33 @@ export class ThreeWorld {
       if (!mesh || mesh.userData.builtType !== t.type) {
         if (mesh) this.destroy(mesh);
         mesh = buildThreatMesh(t);
+        // Detection halo: a soft additive glow behind every hostile so
+        // silhouettes pop against the dark sky at ANY distance — the single
+        // biggest "I can't see them" fix.
+        const halo = glowSprite(
+          t.isBoss ? '#ff4d6d' : t.isElite ? '#ffd166' : '#ff8a5c',
+          1,
+          0.15
+        );
+        halo.position.y = -7; // local −Y → world −z (behind the body)
+        mesh.add(halo);
+        mesh.userData.halo = halo;
         this.threatMeshes.set(t.id, mesh);
         this.scene.add(mesh);
       }
       mesh.visible = true;
       const bob = Math.sin(timeSec * 2.1 + (t.phaseSeed ?? t.id)) * 2.4;
-      mesh.position.set(this.wx(t.x), PLAY_Y + 16 + bob, this.wz(t.y));
-      mesh.rotation.y = Math.atan2(t.vx, -t.vy);
-
+      const zNow = this.depthOf(t.y) + LANE_THREAT;
+      mesh.position.set(this.wx(t.x), this.wy(t.y) + bob, zNow);
+      mesh.rotation.order = 'ZYX';
       if (Math.abs(t.rotationSpeed) > 0) {
-        // Rocks & spinners: direct mapping of the 2D sprite rotation
-        mesh.rotation.x = t.angle * 0.62;
-        mesh.rotation.z = t.angle;
+        // Rocks & spinners: tumble around the sight axis (matches the 2D
+        // sprite rotation semantics).
+        mesh.rotation.set(Math.PI / 2, 0, t.angle);
       } else {
-        mesh.rotation.z = clamp(-t.vx * 0.0016, -0.55, 0.55);
-        mesh.rotation.x = clamp(-t.vy * 0.0006, -0.35, 0.35);
+        // Craft: nose toward the travel direction, belly to the camera —
+        // the full silhouette is always visible (easy to track & aim).
+        mesh.rotation.set(Math.PI / 2, 0, Math.atan2(t.vx, t.vy));
       }
 
       const dome = mesh.userData.shieldDome as THREE.Mesh | undefined;
@@ -855,7 +959,25 @@ export class ThreeWorld {
         mesh.visible = Math.sin(timeSec * 22 + t.id * 1.7) > -0.35;
       }
       const hurtPulse = t.lastDamagedAt !== undefined && timeSec - t.lastDamagedAt < 0.12;
-      mesh.scale.setScalar(t.radius * (hurtPulse ? 1.12 : 1));
+      // Distance size compensation: far spawns shrink hard in perspective —
+      // pad them back up (+up to ~55%) so high-altitude targets stay
+      // visible and clickable while they're still interceptable.
+      const dCam = mesh.position.distanceTo(this.camera.position);
+      const boost = 1 + clamp((dCam - 640) / 2300, 0, 0.55);
+      mesh.scale.setScalar(t.radius * boost * (hurtPulse ? 1.12 : 1));
+      const halo = mesh.userData.halo as THREE.Sprite | undefined;
+      if (halo) {
+        halo.scale.setScalar(t.radius * 6.2 * boost);
+        (halo.material as THREE.SpriteMaterial).opacity =
+          0.12 + 0.05 * Math.sin(timeSec * 3.1 + (t.phaseSeed ?? t.id));
+      }
+
+      // Hit-confirm feed for the overlay markers.
+      const prevHp = this.hpSnapshot.get(t.id);
+      if (prevHp !== undefined && t.hp < prevHp && this.hitMarkers.length < 28) {
+        this.hitMarkers.push({ x: t.x, y: t.y, z: zNow, t: timeSec });
+      }
+      this.hpSnapshot.set(t.id, t.hp);
 
       if (t.type === 'chrono_wraith' && mesh.userData.chronoRing) {
         (mesh.userData.chronoRing as THREE.Mesh).rotation.z += dt * 2.4;
@@ -868,6 +990,11 @@ export class ThreeWorld {
       }
     }
     this.releaseStale(this.threatMeshes, seen);
+    if (this.hpSnapshot.size > 500) {
+      for (const id of this.hpSnapshot.keys()) {
+        if (!seen.has(id)) this.hpSnapshot.delete(id);
+      }
+    }
   }
 
   private syncProjectiles(state: WorldState, timeSec: number, dt: number) {
@@ -882,9 +1009,10 @@ export class ThreeWorld {
         this.scene.add(mesh);
       }
       mesh.visible = true;
-      mesh.position.set(this.wx(p.x), PLAY_Y + 10, this.wz(p.y));
-      mesh.rotation.y = Math.atan2(p.vx, -p.vy);
-      if (p.isGrenade) mesh.rotation.x += dt * 9;
+      mesh.position.set(this.wx(p.x), this.wy(p.y), this.depthOf(p.y) + LANE_SHOT);
+      mesh.rotation.order = 'ZYX';
+      mesh.rotation.set(Math.PI / 2, 0, Math.atan2(p.vx, p.vy));
+      if (p.isGrenade) mesh.rotation.y += dt * 9;
       const beam = mesh.getObjectByName('beam');
       if (beam) beam.scale.z = p.length || 24;
     }
@@ -904,7 +1032,7 @@ export class ThreeWorld {
       }
       mesh.visible = true;
       const bob = Math.sin(timeSec * 2.6 + g.id) * 3.2;
-      mesh.position.set(this.wx(g.x), PLAY_Y + 18 + bob, this.wz(g.y));
+      mesh.position.set(this.wx(g.x), this.wy(g.y) + bob, this.depthOf(g.y) + LANE_GOODIE);
       mesh.rotation.y += dt * 1.9;
       const core = mesh.getObjectByName('core');
       if (core) core.rotation.x += dt * 1.2;
@@ -927,15 +1055,21 @@ export class ThreeWorld {
             opacity: 0.4,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
+            side: THREE.DoubleSide,
             toneMapped: false,
           })
         );
-        mesh.rotation.x = -Math.PI / 2;
         this.hazardMeshes.set(h.id, mesh);
         this.scene.add(mesh);
       }
       mesh.visible = true;
-      mesh.position.set(this.wx(h.x + h.width / 2), 1.2, this.wz(h.y + h.height / 2));
+      // Containment-field quad on the wall at the hazard rect (matches the
+      // 2D renderer's screen-space danger patches).
+      mesh.position.set(
+        this.wx(h.x + h.width / 2),
+        this.wy(h.y + h.height / 2),
+        this.depthOf(h.y) + LANE_SHOT - 2
+      );
       mesh.scale.set(h.width, h.height, 1);
       (mesh.material as THREE.MeshBasicMaterial).opacity =
         0.55 * (h.duration / Math.max(0.001, h.maxDuration));
@@ -953,9 +1087,9 @@ export class ThreeWorld {
         continue;
       }
       comet.visible = true;
-      comet.position.set(this.wx(s.x), PLAY_Y + 26, this.wz(s.y));
-      comet.rotation.y = Math.atan2(s.vx, -s.vy);
-      comet.rotation.x = s.fuse > 0 ? 0.25 : -0.4;
+      comet.position.set(this.wx(s.x), this.wy(s.y), this.depthOf(s.y) + LANE_GOODIE + 6);
+      comet.rotation.order = 'ZYX';
+      comet.rotation.set(Math.PI / 2, 0, Math.atan2(s.vx, s.vy));
     }
   }
 
@@ -965,8 +1099,8 @@ export class ThreeWorld {
     for (let i = 0; i < n; i++) {
       const p = state.particles[i];
       this.pPos[i * 3] = this.wx(p.x);
-      this.pPos[i * 3 + 1] = PLAY_Y + 12;
-      this.pPos[i * 3 + 2] = this.wz(p.y);
+      this.pPos[i * 3 + 1] = this.wy(p.y);
+      this.pPos[i * 3 + 2] = this.depthOf(p.y) + LANE_SHOT + 4;
       const c = cachedColor(p.color);
       this.pCol[i * 3] = c.r;
       this.pCol[i * 3 + 1] = c.g;
@@ -985,11 +1119,19 @@ export class ThreeWorld {
   private syncTelegraphs(state: WorldState, timeSec: number) {
     let li = 0;
     let ri = 0;
-    const turretTop = new THREE.Vector3(this.wx(state.cannonX), PLAY_Y + 30, this.wz(state.cannonY));
-    const baseTop = new THREE.Vector3(0, PLAY_Y + 10, this.wz(state.L_HEIGHT - 60));
+    const turretTop = new THREE.Vector3(
+      this.wx(state.cannonX),
+      this.wy(state.cannonY) + 70,
+      DEFENSE_Z
+    );
+    const baseTop = new THREE.Vector3(0, this.wy(state.L_HEIGHT - 60), PLATFORM_Z);
 
     for (const t of state.threats) {
-      const pos = new THREE.Vector3(this.wx(t.x), PLAY_Y + 16, this.wz(t.y));
+      const pos = new THREE.Vector3(
+        this.wx(t.x),
+        this.wy(t.y),
+        this.depthOf(t.y) + LANE_THREAT
+      );
       const sniperCharging = (t.sniperCharge ?? 0) > 0;
       const diving = t.isDiving || (t.lockOnTimer !== undefined && t.lockOnTimer > 0);
       const teslaCharging = (t.teslaCharge ?? 0) > 0.45;
@@ -1021,7 +1163,7 @@ export class ThreeWorld {
       if (nearBase && ri < this.telegraphRings.length) {
         const ring = this.telegraphRings[ri++];
         ring.visible = true;
-        ring.position.set(pos.x, 1.5, pos.z);
+        ring.position.set(pos.x, pos.y, pos.z - 2);
         const pulse = 1 + 0.18 * Math.sin(timeSec * 10);
         ring.scale.setScalar(t.radius * 2.2 * pulse);
         (ring.material as THREE.MeshBasicMaterial).opacity = 0.45;
@@ -1067,8 +1209,11 @@ export class ThreeWorld {
 
     this.paintVignette(ctx, canvas, state, timeSec);
 
-    // Aim guide: soft dots tracing the barrel's fire line to the aim point —
-    // depth feedback that the 3D tilt used to hide.
+    const lockT = state.aimAssistTarget;
+    const lockIx = state.aimAssistIntercept;
+
+    // Aim guide: soft dots tracing the barrel's fire line toward the aim
+    // point, riding the same depth curve as the projectiles.
     const aimLx = state.cannonX + Math.cos(state.aimAngle) * 260;
     const aimLy = state.cannonY + Math.sin(state.aimAngle) * 260;
     const muzzleLx = state.cannonX + Math.cos(state.aimAngle) * 58;
@@ -1077,11 +1222,9 @@ export class ThreeWorld {
     ctx.fillStyle = '#7dd3fc';
     for (let i = 1; i <= STEPS; i++) {
       const t = i / (STEPS + 1);
-      const px = this.projectToOverlay(
-        muzzleLx + (aimLx - muzzleLx) * t,
-        muzzleLy + (aimLy - muzzleLy) * t,
-        PLAY_Y + 8
-      );
+      const lx = muzzleLx + (aimLx - muzzleLx) * t;
+      const ly = muzzleLy + (aimLy - muzzleLy) * t;
+      const px = this.projectToOverlay(lx, ly, this.depthOf(ly) + LANE_SHOT);
       if (!px) continue;
       ctx.globalAlpha = 0.3 * (1 - t * 0.72);
       ctx.beginPath();
@@ -1090,22 +1233,133 @@ export class ThreeWorld {
     }
     ctx.globalAlpha = 1;
 
-    // Tactical reticle with target-lock brackets
-    const aimPx = this.projectToOverlay(aimLx, aimLy, PLAY_Y + 6);
-    if (aimPx) {
-      let hover: Threat | null = null;
-      let bestD = Infinity;
-      for (const t of state.threats) {
-        const dx = t.x - aimLx;
-        const dy = t.y - aimLy;
-        const d = dx * dx + dy * dy;
-        const rr = (t.radius + 26) * (t.radius + 26);
-        if (d < rr && d < bestD) {
-          bestD = d;
-          hover = t;
+    // --- Threat scan: incoming chevrons (above frame) + HP pips ----------
+    for (let i = 0; i < state.threats.length; i++) {
+      const t = state.threats[i];
+      if (t.isPhasedOut || t.isStealth) continue;
+      const zT = this.depthOf(t.y) + LANE_THREAT;
+      const px = this.projectToOverlay(t.x, t.y, zT);
+      if (!px) continue;
+      const offTop = px.y < -8;
+      const offX = px.x < -20 || px.x > canvas.width + 20;
+      if (offTop || offX) {
+        // Incoming chevron pinned to the screen edge: shows WHERE the next
+        // hostile is about to enter from. Pulses red for closing threats.
+        const cx = clamp(px.x, 26 * scale + 8, canvas.width - 26 * scale - 8);
+        const cy = 15 * scale + 6;
+        const danger = t.y > state.L_HEIGHT * 0.45 || t.type === 'hypersonic_missile';
+        ctx.globalAlpha = 0.5 + 0.35 * Math.sin(timeSec * 6 + t.id);
+        ctx.fillStyle = danger ? '#ff5f6b' : '#fbbf24';
+        ctx.beginPath();
+        const w = 9 * scale + 3;
+        ctx.moveTo(cx - w, cy - w * 0.7);
+        ctx.lineTo(cx + w, cy - w * 0.7);
+        ctx.lineTo(cx, cy + w * 0.75);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        continue;
+      }
+      // HP pip bar above damaged threats (bosses keep their HUD bar).
+      if (t.isBoss || t.hp >= t.maxHp) continue;
+      const left = this.projectToOverlay(t.x - t.radius, t.y, zT);
+      const right = this.projectToOverlay(t.x + t.radius, t.y, zT);
+      const top = this.projectToOverlay(t.x, t.y - t.radius, zT);
+      if (!left || !right || !top) continue;
+      const bw = Math.abs(right.x - left.x);
+      if (bw < 16) continue;
+      const bh = Math.max(2.2, 2.6 * scale);
+      const bx = (left.x + right.x) / 2 - bw / 2;
+      const by = top.y - bh * 3.1;
+      const ratio = clamp(t.hp / Math.max(1, t.maxHp), 0, 1);
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.66)';
+      ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+      ctx.fillStyle = ratio > 0.55 ? '#4ade80' : ratio > 0.28 ? '#fbbf24' : '#f87171';
+      ctx.fillRect(bx, by, bw * ratio, bh);
+      ctx.globalAlpha = 1;
+    }
+
+    // --- Hit-confirm markers: crisp X ticks at fresh impact points --------
+    for (let i = this.hitMarkers.length - 1; i >= 0; i--) {
+      const age = timeSec - this.hitMarkers[i].t;
+      if (age > 0.24 || age < 0) {
+        if (age > 0.24) this.hitMarkers.splice(i, 1);
+        continue;
+      }
+      const m = this.hitMarkers[i];
+      const px = this.projectToOverlay(m.x, m.y, m.z);
+      if (!px) continue;
+      const k = age / 0.24;
+      const r0 = (7 + k * 9) * scale;
+      const tick = (4.6 - k * 2.2) * scale;
+      ctx.globalAlpha = 1 - k;
+      ctx.strokeStyle = '#ffe9a8';
+      ctx.lineWidth = Math.max(1.3, 1.8 * scale);
+      ctx.beginPath();
+      for (const [dx, dy] of [
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+        [1, 1],
+      ] as const) {
+        ctx.moveTo(px.x + dx * r0 * 0.45, px.y + dy * r0 * 0.45);
+        ctx.lineTo(px.x + dx * (r0 * 0.45 + tick), px.y + dy * (r0 * 0.45 + tick));
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // --- Fire-control assist readout ---------------------------------------
+    // Orange brackets frame the tracked target; the diamond pip marks the
+    // PREDICTED intercept (where the shots actually go).
+    if (lockT && lockIx) {
+      const zT = this.depthOf(lockT.y) + LANE_THREAT;
+      const tpx = this.projectToOverlay(lockT.x, lockT.y, zT);
+      const lpx = this.projectToOverlay(lockT.x - lockT.radius, lockT.y, zT);
+      const rpx = this.projectToOverlay(lockT.x + lockT.radius, lockT.y, zT);
+      const ipx = this.projectToOverlay(lockIx.x, lockIx.y, this.depthOf(lockIx.y) + LANE_SHOT);
+      if (tpx && lpx && rpx) {
+        const br = Math.max(14, Math.abs(rpx.x - lpx.x) * 0.62);
+        const arm = br * 0.34;
+        ctx.strokeStyle = '#ffb454';
+        ctx.lineWidth = Math.max(1.6, 2.2 * scale);
+        const pulse = 1 + 0.05 * Math.sin(timeSec * 9);
+        for (const [sx, sy] of [
+          [-1, -1],
+          [1, -1],
+          [-1, 1],
+          [1, 1],
+        ] as const) {
+          ctx.beginPath();
+          ctx.moveTo(tpx.x + sx * br * pulse - sx * arm, tpx.y + sy * br * pulse);
+          ctx.lineTo(tpx.x + sx * br * pulse, tpx.y + sy * br * pulse);
+          ctx.lineTo(tpx.x + sx * br * pulse, tpx.y + sy * br * pulse - sy * arm);
+          ctx.stroke();
+        }
+        // Lead pip: rotating diamond at the intercept point.
+        if (ipx) {
+          const s2 = (5.5 + Math.sin(timeSec * 7) * 0.9) * scale;
+          const rot = timeSec * 2.2;
+          ctx.fillStyle = '#ffd166';
+          ctx.beginPath();
+          for (let k = 0; k < 4; k++) {
+            const a = rot + (k * Math.PI) / 2;
+            const pxk = ipx.x + Math.cos(a) * s2;
+            const pyk = ipx.y + Math.sin(a) * s2;
+            if (k === 0) ctx.moveTo(pxk, pyk);
+            else ctx.lineTo(pxk, pyk);
+          }
+          ctx.closePath();
+          ctx.fill();
         }
       }
-      const col = hover ? '#ff5f6b' : '#a5dcff';
+    }
+
+    // Tactical reticle — orange while the assist holds a lock.
+    const aimPx = this.projectToOverlay(aimLx, aimLy, this.depthOf(aimLy) + LANE_SHOT);
+    if (aimPx) {
+      const col = lockT ? '#ffb454' : '#a5dcff';
       const r = 12 * scale;
       ctx.strokeStyle = col;
       ctx.lineWidth = Math.max(1.2, 1.5 * scale);
@@ -1128,22 +1382,20 @@ export class ThreeWorld {
       ctx.beginPath();
       ctx.arc(aimPx.x, aimPx.y, Math.max(1.2, 1.7 * scale), 0, Math.PI * 2);
       ctx.fill();
-      // Target lock: corner brackets + soft glow ring
-      if (hover) {
-        const br = 21 * scale;
-        const arm = 7 * scale;
-        ctx.lineWidth = Math.max(1.6, 2.2 * scale);
-        for (const [sx, sy] of [
-          [-1, -1],
-          [1, -1],
-          [-1, 1],
-          [1, 1],
-        ] as const) {
+      // Dotted connector reticle → intercept while locked (reads as "the
+      // computer is walking your fire onto the target").
+      if (lockT && lockIx) {
+        const ipx = this.projectToOverlay(lockIx.x, lockIx.y, this.depthOf(lockIx.y) + LANE_SHOT);
+        if (ipx) {
+          ctx.globalAlpha = 0.35;
+          ctx.setLineDash([3, 5]);
+          ctx.lineWidth = Math.max(1, 1.2 * scale);
           ctx.beginPath();
-          ctx.moveTo(aimPx.x + sx * br - sx * arm, aimPx.y + sy * br);
-          ctx.lineTo(aimPx.x + sx * br, aimPx.y + sy * br);
-          ctx.lineTo(aimPx.x + sx * br, aimPx.y + sy * br - sy * arm);
+          ctx.moveTo(aimPx.x, aimPx.y);
+          ctx.lineTo(ipx.x, ipx.y);
           ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
         }
       }
       // Fire pulse: expanding ring on recoil
@@ -1160,7 +1412,7 @@ export class ThreeWorld {
     // Floating combat text — dark stroke keeps it readable over bright blooms
     for (let i = 0; i < state.floatingTexts.length; i++) {
       const ft = state.floatingTexts[i];
-      const px = this.projectToOverlay(ft.x, ft.y, PLAY_Y + 46);
+      const px = this.projectToOverlay(ft.x, ft.y, this.depthOf(ft.y) + LANE_TEXT);
       if (!px) continue;
       ctx.globalAlpha = ft.alpha;
       const fs = Math.max(8, Math.round(14 * ft.scale * scale));
@@ -1215,10 +1467,11 @@ export class ThreeWorld {
     }
   }
 
-  private projectToOverlay(lx: number, ly: number, y: number): { x: number; y: number } | null {
+  /** Project a logical-space point at world depth `z` to overlay pixels. */
+  private projectToOverlay(lx: number, ly: number, z: number): { x: number; y: number } | null {
     const canvas = this.overlay;
     if (!canvas) return null;
-    const v = new THREE.Vector3(this.wx(lx), y, this.wz(ly)).project(this.camera);
+    const v = new THREE.Vector3(this.wx(lx), this.wy(ly), z).project(this.camera);
     if (v.z > 1) return null;
     return {
       x: (v.x * 0.5 + 0.5) * canvas.width,
@@ -1248,13 +1501,27 @@ export class ThreeWorld {
       const t = now / 1000;
       const dt = this.idleLast ? Math.min(0.05, (now - this.idleLast) / 1000) : 0.016;
       this.idleLast = now;
+      // Attract mode: slow drift across the battery, gazing up the corridor
+      // into the sky — sells the "look up, they're coming" fantasy on the
+      // menu screen.
       this.camera.position.set(
         this.camBasePos.x + Math.sin(t * 0.12) * 90,
-        this.camBasePos.y + Math.sin(t * 0.09) * 30,
+        this.camBasePos.y + Math.sin(t * 0.09) * 26,
         this.camBasePos.z
       );
-      this.camera.lookAt(this.camTarget);
+      this.camera.lookAt(
+        this.camTarget.x + Math.sin(t * 0.07) * 60,
+        this.camTarget.y + 120,
+        this.camTarget.z
+      );
       this.camera.updateMatrixWorld();
+      // Attract-mode turret pose: stands guard on the citadel deck, slowly
+      // sweeping the horizon while the camera drifts past it.
+      if (this.turretGroup && this.turretHead && this.turretBarrel) {
+        this.turretGroup.position.set(0, this.wy(this.LH - 185) + 6, DEFENSE_Z);
+        this.turretHead.rotation.y = Math.sin(t * 0.22) * 0.65;
+        this.turretBarrel.rotation.x = -0.62 + Math.sin(t * 0.13) * 0.1;
+      }
       for (let i = 0; i < this.stars.length; i++) this.stars[i].rotation.y += 0.0016;
       this.earth?.update(dt);
       this.corridorMat.uniforms.uTime.value = t;

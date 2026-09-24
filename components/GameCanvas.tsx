@@ -116,9 +116,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     const engine = engineRef.current;
     const w = window as unknown as {
-      __earthDefender?: { engine: GameEngine | null; sound: typeof sound };
+      __earthDefender?: {
+        engine: GameEngine | null;
+        sound: typeof sound;
+        world?: ThreeWorld | null;
+      };
     };
-    w.__earthDefender = { engine, sound };
+    // Preserve sibling QA handles; re-attach this canvas' 3D world.
+    w.__earthDefender = { ...w.__earthDefender, engine, sound, world: worldRef.current };
     return () => {
       if (w.__earthDefender?.engine === engine) w.__earthDefender = undefined;
     };

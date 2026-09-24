@@ -553,6 +553,8 @@ export function buildProjectileMesh(p: Projectile): THREE.Group {
  */
 export function buildTurret(cannonColor: string): {
   group: THREE.Group;
+  /** Yaw assembly: yoke + sensors + barrel — rotates to face the target. */
+  head: THREE.Group;
   barrel: THREE.Group;
   muzzle: THREE.Sprite;
 } {
@@ -594,23 +596,25 @@ export function buildTurret(cannonColor: string): {
   collarLight.position.y = 17.2;
   group.add(collarLight);
 
-  // Yoke arms that carry the barrel
+  // Yoke arms that carry the barrel — mounted on the yawing head so the
+  // whole upper carriage slews toward the aim direction.
+  const head = new THREE.Group();
   for (const dx of [-11.5, 11.5]) {
     const arm = new THREE.Mesh(new THREE.BoxGeometry(4.5, 12, 9), hullMat(steel, 0.65, 0.4));
     arm.position.set(dx, 23, -2);
-    group.add(arm);
+    head.add(arm);
     const cap = new THREE.Mesh(new THREE.BoxGeometry(5.4, 1.6, 10), hullMat(shade(steel, 0.18), 0.7, 0.35));
     cap.position.set(dx, 29.4, -2);
-    group.add(cap);
+    head.add(cap);
   }
 
   // Sensor cluster behind the breech
   const sensor = new THREE.Mesh(new THREE.SphereGeometry(3.4, 12, 9), hullMat('#232f4a', 0.6, 0.35));
   sensor.position.set(0, 31, -8);
-  group.add(sensor);
+  head.add(sensor);
   const sensorEye = glowSprite('#7dd3fc', 7, 0.65);
   sensorEye.position.set(0, 31, -5.2);
-  group.add(sensorEye);
+  head.add(sensorEye);
   // Comms antennas
   for (const [ax, h, tilt] of [
     [-7, 16, 0.28],
@@ -619,10 +623,10 @@ export function buildTurret(cannonColor: string): {
     const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.4, h, 5), hullMat('#8ea3c4', 0.8, 0.3));
     mast.position.set(ax, 26 + h * 0.4, -10);
     mast.rotation.z = tilt;
-    group.add(mast);
+    head.add(mast);
     const tipLamp = new THREE.Mesh(new THREE.SphereGeometry(0.65, 6, 6), emissiveMat('#f87171', 2.4));
     tipLamp.position.set(ax - Math.sin(tilt) * h * 0.5, 26 + h * 0.8, -10);
-    group.add(tipLamp);
+    head.add(tipLamp);
   }
 
   // --- Rotating barrel assembly (pivot at origin; raised/mounted by world) ---
@@ -708,13 +712,14 @@ export function buildTurret(cannonColor: string): {
 
   barrel.userData.coils = coils;
   barrel.position.y = 22;
-  group.add(barrel);
+  head.add(barrel);
+  group.add(head);
 
   // Hero presence: the cannon is the star of the composition — scale the
-  // whole emplacement up so it reads as a heavy orbital battery.
+  // whole emplacement up so it reads as a heavy planetary-defense battery.
   group.scale.setScalar(1.25);
 
-  return { group, barrel, muzzle };
+  return { group, head, barrel, muzzle };
 }
 
 /** Starfall catastrophe shard — burning comet with plasma tail. */
