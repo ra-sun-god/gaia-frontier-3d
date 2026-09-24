@@ -22,7 +22,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildEarth, buildFlareStars, buildNebula, buildStarShells, buildSun, EarthGroup } from './earth';
+import { buildEarth, buildFlareStars, buildNebula, buildStarfield, buildSun, EarthGroup, Starfield } from './earth';
 import { EraInfo, FloatingText, Goodie, GroundHazard, Particle, Projectile, Threat } from '../types';
 import {
   buildGoodieMesh,
@@ -44,6 +44,30 @@ const DEFENSE_Z = 20;   // turret / citadel plane (just in front of the wall)
 const PLATFORM_Z = 52;  // Gaia citadel platform
 const MAX_PARTICLES = 520;
 const MAX_COMETS = 24;
+
+/** Visual presence multiplier for hostiles: threat meshes are authored at
+ *  1 world unit per logical radius, which reads tiny at rig distance. This
+ *  blows the DRAWN size up only — the 2D engine's collision & hit tests
+ *  stay logical, so gameplay difficulty is completely untouched. */
+const THREAT_VIZ = 1.42;
+
+/** LOCAL scale for the per-threat detection halo sprite. The halo lives
+ *  INSIDE the scaled threat group, so the parent already applies
+ *  radius·THREAT_VIZ·boost — multiplying by radius/boost again (the old
+ *  quadratic form) blew single halos up to thousands of world units: a
+ *  sky-drowning orange wash that hid the starfield and flattened enemy
+ *  contrast. Keep it a constant; world halo ≈ 4.6× the body. */
+const HALO_LOCAL = 4.6;
+
+/** Absolute WORLD-size cap for the detection halo (flagships included). */
+const HALO_WORLD_CAP = 150;
+/** Other glow sprites (boss aura, engine flames, misc): never wider than
+ *  GLOW_BODY_FACTOR× the drawn body, and their size²·opacity “energy” is
+ *  bounded — bright glows get proportionally tighter. Era flagships run
+ *  radius 50+; without these caps their 0.8-opacity engine flames become
+ *  400-unit floodlights that wash the whole sky red. */
+const GLOW_BODY_FACTOR = 2.4;
+const GLOW_ENERGY_WORLD = 130; // world cap for a 0.2-opacity glow
 
 export interface StarfallShardLike {
   x: number;
@@ -144,6 +168,7 @@ export class ThreeWorld {
   private nebula!: THREE.Mesh;
   private sun!: THREE.Group;
   private stars: THREE.Points[] = [];
+  private starfield: Starfield | null = null;
   private keyLight!: THREE.DirectionalLight;
   private hemiLight!: THREE.HemisphereLight;
   private muzzleLight!: THREE.PointLight;
@@ -269,7 +294,8 @@ export class ThreeWorld {
     // leaving an empty void sky.
     this.nebula = buildNebula(4400);
     this.scene.add(this.nebula);
-    this.stars = buildStarShells();
+    this.starfield = buildStarfield();
+    this.stars = this.starfield.points;
     for (const s of this.stars) this.scene.add(s);
     this.scene.add(buildFlareStars());
     this.sun = buildSun();
@@ -570,6 +596,7 @@ export class ThreeWorld {
     const cap = this.quality >= 2 ? 1.25 : this.quality === 1 ? 1.6 : 2;
     const dpr = Math.min(window.devicePixelRatio || 1, cap);
     this.renderer.setPixelRatio(dpr);
+    this.starfield?.setDpr(dpr);
     this.renderer.setSize(this.cssW, this.cssH, false);
     this.composer.setPixelRatio(dpr);
     this.composer.setSize(this.cssW, this.cssH);
@@ -680,7 +707,7 @@ export class ThreeWorld {
       new THREE.Vector3(0, defY + 150, DEFENSE_Z),
     ];
 
-    let R = Math.max(this.LH, this.LW) * 0.95;
+    let R = Math.max(this.LH, this.LW) * 0.9;
     const v = new THREE.Vector3();
     for (let iter = 0; iter < 34; iter++) {
       this.camera.position.copy(this.camTarget).addScaledVector(dir, R);
@@ -691,8 +718,11 @@ export class ThreeWorld {
         v.copy(c).project(this.camera);
         maxNdc = Math.max(maxNdc, Math.abs(v.x), Math.abs(v.y));
       }
-      if (maxNdc > 0.95) R *= 1.045;
-      else if (maxNdc < 0.86) R *= 0.965;
+      // Tighter frame margins pull the rig ~5% closer to the wall: every
+      // hostile reads larger and more in-your-face without cropping the
+      // spawn band (offscreen threats are already chevron-marked).
+      if (maxNdc > 0.97) R *= 1.045;
+      else if (maxNdc < 0.89) R *= 0.965;
       else break;
     }
     this.camBasePos.copy(this.camera.position);
@@ -721,6 +751,16 @@ export class ThreeWorld {
    *  the corridor — cheap, deterministic approach parallax. */
   private depthOf(ly: number) {
     return -clamp((this.LH * 0.34 - ly) * 0.62, 0, 205);
+  }
+
+  /** Drawn (visual) radius of a threat — syncThreats scales meshes by
+   *  THREAT_VIZ plus distance compensation; the overlay HUD needs the same
+   *  number so HP pips and lock brackets hug the body silhouette. */
+  private vizRadius(t: { x: number; y: number; radius: number }): number {
+    const zT = this.depthOf(t.y) + LANE_THREAT;
+    const dCam = this.tmpV.set(this.wx(t.x), this.wy(t.y), zT).distanceTo(this.camera.position);
+    const boost = 1 + clamp((dCam - 560) / 1500, 0, 0.85);
+    return t.radius * THREAT_VIZ * boost;
   }
 
   /** Pointer → logical coords (exact inverse of the current camera projection).
@@ -926,13 +966,14 @@ export class ThreeWorld {
         mesh = buildThreatMesh(t);
         // Detection halo: a soft additive glow behind every hostile so
         // silhouettes pop against the dark sky at ANY distance — the single
-        // biggest "I can't see them" fix.
+        // biggest "I can't see them" fix. LOCAL scale only (see HALO_LOCAL):
+        // the parent group's scale carries radius·THREAT_VIZ·boost.
         const halo = glowSprite(
           t.isBoss ? '#ff4d6d' : t.isElite ? '#ffd166' : '#ff8a5c',
           1,
           0.15
         );
-        halo.position.y = -7; // local −Y → world −z (behind the body)
+        halo.position.y = -0.5; // local −Y → world −z, just behind the body
         mesh.add(halo);
         mesh.userData.halo = halo;
         this.threatMeshes.set(t.id, mesh);
@@ -959,17 +1000,46 @@ export class ThreeWorld {
         mesh.visible = Math.sin(timeSec * 22 + t.id * 1.7) > -0.35;
       }
       const hurtPulse = t.lastDamagedAt !== undefined && timeSec - t.lastDamagedAt < 0.12;
-      // Distance size compensation: far spawns shrink hard in perspective —
-      // pad them back up (+up to ~55%) so high-altitude targets stay
-      // visible and clickable while they're still interceptable.
+      // Distance size compensation, strengthened: perspective shrinks
+      // high-altitude spawns hard — pad them up to +85% (was +55%) so
+      // distant intercepts stay comfortably visible and clickable.
       const dCam = mesh.position.distanceTo(this.camera.position);
-      const boost = 1 + clamp((dCam - 640) / 2300, 0, 0.55);
-      mesh.scale.setScalar(t.radius * boost * (hurtPulse ? 1.12 : 1));
+      const boost = 1 + clamp((dCam - 560) / 1500, 0, 0.85);
+      // THREAT_VIZ adds a global visual presence blowup (gameplay-neutral,
+      // see its doc comment) — hostiles finally read CLOSE.
+      mesh.scale.setScalar(t.radius * THREAT_VIZ * boost * (hurtPulse ? 1.12 : 1));
       const halo = mesh.userData.halo as THREE.Sprite | undefined;
       if (halo) {
-        halo.scale.setScalar(t.radius * 6.2 * boost);
+        // CONSTANT local scale — the parent group already scales by
+        // radius·THREAT_VIZ·boost. (Quadratic historical bug: this used to
+        // read t.radius * 6.2 * boost, which made every halo a fullscreen
+        // orange wash that erased the starfield and enemy contrast.)
+        // Flagships additionally clamp to HALO_WORLD_CAP world units.
+        const parentScale0 = mesh.scale.x;
+        halo.scale.setScalar(
+          parentScale0 > 0 ? Math.min(HALO_LOCAL, HALO_WORLD_CAP / parentScale0) : HALO_LOCAL
+        );
         (halo.material as THREE.SpriteMaterial).opacity =
-          0.12 + 0.05 * Math.sin(timeSec * 3.1 + (t.phaseSeed ?? t.id));
+          0.15 + 0.06 * Math.sin(timeSec * 3.1 + (t.phaseSeed ?? t.id));
+      }
+      // Glow energy guard: every OTHER additive sprite inside the scaled
+      // group (boss aura, engine flames, misc glows) is clamped to
+      // min(GLOW_BODY_FACTOR× body, opacity-scaled energy cap) in WORLD
+      // units — big-radius flagships would otherwise turn their glows
+      // into sky-washing floodlights.
+      const parentScale = mesh.scale.x;
+      if (parentScale > 0) {
+        mesh.traverse((o) => {
+          const spr = o as THREE.Sprite;
+          if (!spr.isSprite || spr === halo) return;
+          const op = Math.max(0.05, (spr.material as THREE.SpriteMaterial).opacity);
+          const worldCap = Math.min(
+            parentScale * GLOW_BODY_FACTOR,
+            GLOW_ENERGY_WORLD * Math.sqrt(0.2 / op)
+          );
+          const localCap = worldCap / parentScale;
+          if (spr.scale.x > localCap) spr.scale.setScalar(localCap);
+        });
       }
 
       // Hit-confirm feed for the overlay markers.
@@ -1165,7 +1235,7 @@ export class ThreeWorld {
         ring.visible = true;
         ring.position.set(pos.x, pos.y, pos.z - 2);
         const pulse = 1 + 0.18 * Math.sin(timeSec * 10);
-        ring.scale.setScalar(t.radius * 2.2 * pulse);
+        ring.scale.setScalar(this.vizRadius(t) * 2.1 * pulse);
         (ring.material as THREE.MeshBasicMaterial).opacity = 0.45;
       }
     }
@@ -1190,9 +1260,14 @@ export class ThreeWorld {
   }
 
   private syncStars(dt: number, state: WorldState) {
+    // Whole-sky drift. Layer 0 carries the Milky Way (stars + haze in one
+    // group) so the band drifts as a unit and can never tear; the inner
+    // uniform shells spin a touch faster for parallax. Speeds are slow —
+    // real skies don't spin like a carousel.
     for (let i = 0; i < this.stars.length; i++) {
-      this.stars[i].rotation.y += dt * (i === 0 ? 0.008 : 0.016);
+      this.stars[i].rotation.y += dt * (i === 0 ? 0.0025 : 0.006);
     }
+    this.starfield?.update(dt); // scintillation clock
     this.scene.rotation.z = state.isOverdrive ? Math.sin(this.lastTimeSec * 9) * 0.004 : 0;
   }
 
@@ -1262,9 +1337,10 @@ export class ThreeWorld {
       }
       // HP pip bar above damaged threats (bosses keep their HUD bar).
       if (t.isBoss || t.hp >= t.maxHp) continue;
-      const left = this.projectToOverlay(t.x - t.radius, t.y, zT);
-      const right = this.projectToOverlay(t.x + t.radius, t.y, zT);
-      const top = this.projectToOverlay(t.x, t.y - t.radius, zT);
+      const vr = this.vizRadius(t);
+      const left = this.projectToOverlay(t.x - vr, t.y, zT);
+      const right = this.projectToOverlay(t.x + vr, t.y, zT);
+      const top = this.projectToOverlay(t.x, t.y - vr, zT);
       if (!left || !right || !top) continue;
       const bw = Math.abs(right.x - left.x);
       if (bw < 16) continue;
@@ -1316,8 +1392,9 @@ export class ThreeWorld {
     if (lockT && lockIx) {
       const zT = this.depthOf(lockT.y) + LANE_THREAT;
       const tpx = this.projectToOverlay(lockT.x, lockT.y, zT);
-      const lpx = this.projectToOverlay(lockT.x - lockT.radius, lockT.y, zT);
-      const rpx = this.projectToOverlay(lockT.x + lockT.radius, lockT.y, zT);
+      const vr = this.vizRadius(lockT);
+      const lpx = this.projectToOverlay(lockT.x - vr, lockT.y, zT);
+      const rpx = this.projectToOverlay(lockT.x + vr, lockT.y, zT);
       const ipx = this.projectToOverlay(lockIx.x, lockIx.y, this.depthOf(lockIx.y) + LANE_SHOT);
       if (tpx && lpx && rpx) {
         const br = Math.max(14, Math.abs(rpx.x - lpx.x) * 0.62);
@@ -1522,7 +1599,8 @@ export class ThreeWorld {
         this.turretHead.rotation.y = Math.sin(t * 0.22) * 0.65;
         this.turretBarrel.rotation.x = -0.62 + Math.sin(t * 0.13) * 0.1;
       }
-      for (let i = 0; i < this.stars.length; i++) this.stars[i].rotation.y += 0.0016;
+      for (let i = 0; i < this.stars.length; i++) this.stars[i].rotation.y += 0.0012;
+      this.starfield?.update(dt);
       this.earth?.update(dt);
       this.corridorMat.uniforms.uTime.value = t;
       this.renderFrame();

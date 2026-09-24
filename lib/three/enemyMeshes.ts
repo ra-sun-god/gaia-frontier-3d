@@ -440,35 +440,49 @@ function buildAlienCraft(g: THREE.Group, t: Threat, c: string): void {
 
 function buildBoss(g: THREE.Group, t: Threat, c: string): void {
   const scaleUp = t.type === 'era_boss' ? 1.35 : 1;
-  g.add(new THREE.Mesh(new THREE.BoxGeometry(7 * scaleUp, 2.2 * scaleUp, 8 * scaleUp), hullMat(c, 0.6, 0.35)));
+  // Normalize the flagship to the "1 local unit ≈ 1 logical radius"
+  // convention every other hull follows. The geometry below is authored
+  // at CRAFT scale (hull 7·scaleUp units wide); left as-is, the world
+  // layer's radius·THREAT_VIZ·boost group scale (≈108 for a radius-46
+  // era flagship) blew the hull up to ~1000 world units — a screen-filling
+  // orange slab that drowned the starfield and read as a red gradient
+  // wash. Scaled into a 2.3-unit hull the flagship keeps majestic size
+  // (~2-3× a regular craft) with correct proportions everywhere.
+  const body = new THREE.Group();
+  body.scale.setScalar(2.3 / (7 * scaleUp));
+  g.add(body);
+  body.add(new THREE.Mesh(new THREE.BoxGeometry(7 * scaleUp, 2.2 * scaleUp, 8 * scaleUp), hullMat(c, 0.6, 0.35)));
   for (const dx of [-1, 1]) {
     const wing = new THREE.Mesh(new THREE.BoxGeometry(6 * scaleUp, 0.7, 3.2 * scaleUp), hullMat(shade(c, -0.25)));
     wing.position.set(dx * 5.2 * scaleUp, -0.3, -0.6);
     wing.rotation.y = dx * 0.35;
-    g.add(wing);
+    body.add(wing);
     const eng = engineBlock(c, 0.5 * scaleUp);
     eng.position.set(dx * 3 * scaleUp, 0, -4.2 * scaleUp);
-    g.add(eng);
+    body.add(eng);
   }
   const bridge = new THREE.Mesh(
     new THREE.SphereGeometry(2.2 * scaleUp, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2),
     glassMat('#7dd3fc', 0.45)
   );
   bridge.position.set(0, 1.1 * scaleUp, 1.6 * scaleUp);
-  g.add(bridge);
+  body.add(bridge);
   const pilot = t.alienPilot
     ? pilotBust(t.alienPilot.skinColor, t.alienPilot.eyeColor)
     : pilotBust('#84cc16', '#f97316');
   pilot.position.set(0, 1.2 * scaleUp, 1.6 * scaleUp);
   pilot.scale.setScalar(0.8 * scaleUp);
-  g.add(pilot);
+  body.add(pilot);
   const phases = t.maxBossPhases || 1;
   for (let i = 0; i < phases; i++) {
     const pip = new THREE.Mesh(new THREE.SphereGeometry(0.3 * scaleUp, 6, 6), emissiveMat('#f43f5e', 2.4));
     pip.position.set((i - (phases - 1) / 2) * 1.1 * scaleUp, -1.2 * scaleUp, 3.6 * scaleUp);
-    g.add(pip);
+    body.add(pip);
   }
-  g.add(glowSprite(c, 12 * scaleUp, 0.35));
+  // Presence aura. LOCAL scale only — the group is scaled by
+  // radius·THREAT_VIZ·boost in the world layer (plus the energy cap
+  // there), so keep the multiplier modest or the flagship washes the sky.
+  g.add(glowSprite(c, 4 * scaleUp, 0.35));
 }
 
 // ---------------------------------------------------------------------------

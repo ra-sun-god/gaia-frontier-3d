@@ -316,16 +316,20 @@ function paintNebulaMap(seed: number): THREE.CanvasTexture {
   const H = 512;
   const rnd = mulberry32(seed ^ 0x51ab3f);
   const [c, g] = makeCanvas(W, H);
-  g.fillStyle = '#01030a';
+  g.fillStyle = '#010208';
   g.fillRect(0, 0, W, H);
 
+  // Sparse, very dim deep-space nebulae — pure background texture. The
+  // Milky Way itself is rendered as a real star/haze overdensity in
+  // buildStarfield() (keeping dome texture and star band in lockstep by
+  // construction), so the dome stays recessive.
   const tints: Array<[string, number]> = [
-    ['#3b2a7a', 0.26],
-    ['#123a5e', 0.32],
-    ['#5b2a86', 0.2],
-    ['#0e4a5e', 0.3],
-    ['#4a1e50', 0.22],
-    ['#1a2f6e', 0.28],
+    ['#3b2a7a', 0.15],
+    ['#123a5e', 0.18],
+    ['#5b2a86', 0.12],
+    ['#0e4a5e', 0.16],
+    ['#4a1e50', 0.13],
+    ['#1a2f6e', 0.15],
   ];
   for (const [color, alpha] of tints) {
     const x = rnd() * W;
@@ -343,17 +347,6 @@ function paintNebulaMap(seed: number): THREE.CanvasTexture {
       g.fill();
     }
   }
-  // Milky-way style diagonal wisp
-  g.save();
-  g.translate(W / 2, H / 2);
-  g.rotate(-0.32);
-  const wisp = g.createLinearGradient(-500, 0, 500, 0);
-  wisp.addColorStop(0, 'rgba(120,140,220,0)');
-  wisp.addColorStop(0.5, 'rgba(140,160,235,0.1)');
-  wisp.addColorStop(1, 'rgba(120,140,220,0)');
-  g.fillStyle = wisp;
-  g.fillRect(-520, -70, 1040, 140);
-  g.restore();
 
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -547,71 +540,247 @@ export function buildSun(): THREE.Group {
   return group;
 }
 
-/**
- * Parallax star shells. Materials set fog:false — the battlefield fog
- * previously swallowed the entire starfield (stars sit at 1.5k–3.6k units,
- * deep inside the 500–2600 fog band) leaving an empty void sky.
- */
-export function buildStarShells(): THREE.Points[] {
-  const layers: Array<{ count: number; radius: number; size: number; opacity: number }> = [
-    { count: 1000, radius: 3400, size: 3.2, opacity: 1.0 },
-    { count: 460, radius: 2200, size: 4.2, opacity: 0.95 },
-    { count: 180, radius: 1200, size: 5.2, opacity: 0.9 },
-  ];
-  const palette = ['#ffffff', '#cfe0ff', '#ffe9c9', '#bcd4ff', '#ffd2b0'];
-  return layers.map(({ count, radius, size, opacity }, li) => {
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const rnd = mulberry32(77 + li * 31);
-    const tmp = new THREE.Color();
-    for (let i = 0; i < count; i++) {
-      // Sky-biased sampling: uniform cos(phi) on [-0.25, 1.0] keeps stars
-      // above the horizon plane where the camera actually looks.
-      const phi = Math.acos(rnd() * 1.25 - 0.25);
-      const theta = rnd() * Math.PI * 2;
-      const rr = radius * (0.82 + rnd() * 0.3);
-      positions[i * 3] = rr * Math.sin(phi) * Math.cos(theta);
-      positions[i * 3 + 1] = Math.abs(rr * Math.cos(phi)) * 0.72 + 90;
-      positions[i * 3 + 2] = rr * Math.sin(phi) * Math.sin(theta);
-      tmp.set(palette[Math.floor(rnd() * palette.length)]);
-      const dim = 0.75 + rnd() * 0.25;
-      colors[i * 3] = tmp.r * dim;
-      colors[i * 3 + 1] = tmp.g * dim;
-      colors[i * 3 + 2] = tmp.b * dim;
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    return new THREE.Points(
-      geo,
-      new THREE.PointsMaterial({
-        size,
-        sizeAttenuation: false,
-        vertexColors: true,
-        transparent: true,
-        opacity,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        fog: false,
-        toneMapped: false,
-      })
-    );
-  });
+// ---------------------------------------------------------------------------
+// Starfield — realism kit
+// ---------------------------------------------------------------------------
+
+/** Naked-eye stellar color mix. Real night skies are dominated by white and
+ *  warm-white stars with scattering blue-white and orange notes — not the
+ *  uniform cyan of sci-fi wallpapers. Weights sum to 1. */
+const STAR_MIX: Array<[string, number]> = [
+  ['#ffffff', 0.18],
+  ['#f8f7ff', 0.14],
+  ['#dfe8ff', 0.12],
+  ['#c3d2ff', 0.07],
+  ['#fff5e8', 0.16],
+  ['#ffe8c2', 0.13],
+  ['#ffd49e', 0.1],
+  ['#ffb87a', 0.07],
+  ['#ff9e6e', 0.03],
+];
+
+const STAR_VERT = /* glsl */ `
+  attribute vec3 acolor;
+  attribute float asize;
+  attribute float aphase;
+  attribute float abright;
+  attribute float ahaze;
+  uniform float uTime;
+  uniform float uDpr;
+  varying vec3 vColor;
+  varying float vBright;
+  varying float vHaze;
+  void main() {
+    vColor = acolor;
+    vHaze = ahaze;
+    // Gentle scintillation — only bright stars shimmer; the faint mass is
+    // already at the visibility floor (real scintillation hits bright
+    // point sources hardest, and haze never shimmers).
+    float amp = 0.15 * smoothstep(0.3, 0.85, abright) * (1.0 - ahaze);
+    float tw = sin(uTime * (0.45 + fract(aphase * 5.13) * 1.35) + aphase * 41.7);
+    vBright = abright * (1.0 - amp * (0.5 + 0.5 * tw));
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = asize * uDpr;
+    gl_Position = projectionMatrix * mv;
+  }`;
+
+const STAR_FRAG = /* glsl */ `
+  varying vec3 vColor;
+  varying float vBright;
+  varying float vHaze;
+  void main() {
+    vec2 q = gl_PointCoord - vec2(0.5);
+    float d2 = dot(q, q);
+    // Gaussian point: crisp photosphere core + faint airy halo — never a
+    // square (the #1 tell of a fake starfield).
+    float star = exp(-d2 * 46.0) + exp(-d2 * 8.0) * 0.16;
+    // Milky Way haze blobs: broad, soft, dim.
+    float haze = exp(-d2 * 5.0) * 0.5;
+    float a = mix(star, haze, vHaze) * vBright;
+    if (a < 0.012) discard;
+    gl_FragColor = vec4(vColor, a);
+  }`;
+
+export interface Starfield {
+  /** Parallax layers; the owner rotates them for slow sky drift. */
+  points: THREE.Points[];
+  /** Advance the scintillation clock. */
+  update: (dt: number) => void;
+  /** Keep apparent sizes constant across device pixel ratios. */
+  setDpr: (dpr: number) => void;
 }
 
-/** A handful of bright cross-flare hero stars for depth cues. Compact —
- *  oversized flares bloom into fake "god ray" beams. */
+/**
+ * Photoreal-ish starfield, replacing the old flat "space wallpaper":
+ *  - power-law magnitudes: thousands of barely-resolved pinpricks, a
+ *    handful of beacons (uniform-brightness skies read as fake);
+ *  - gaussian round sprites with a hot core, square-edge-free;
+ *  - blackbody color mix, faint stars desaturating toward slate;
+ *  - a Milky Way great-circle overdensity of dim stars PLUS soft haze
+ *    blobs in the SAME layer — band and glow can never drift apart;
+ *  - gentle per-star scintillation on bright stars only.
+ */
+export function buildStarfield(): Starfield {
+  // Great-circle pole of the galactic band (tilted so the band arcs
+  // diagonally across the visible sky instead of hugging the horizon).
+  const pole = new THREE.Vector3(0.44, 0.58, 0.68).normalize();
+  const dir = new THREE.Vector3();
+  const gray = new THREE.Color('#93a7c8');
+
+  const layers = [
+    { count: 2100, band: 2400, haze: 900, radius: 3400, sizeBase: 0.95, sizeRange: 1.35 },
+    { count: 900, band: 0, haze: 0, radius: 2200, sizeBase: 1.35, sizeRange: 1.7 },
+    { count: 300, band: 0, haze: 0, radius: 1200, sizeBase: 1.85, sizeRange: 2.1 },
+  ];
+
+  const mats: THREE.ShaderMaterial[] = [];
+  const points: THREE.Points[] = [];
+
+  for (let li = 0; li < layers.length; li++) {
+    const { count, band, haze, radius, sizeBase, sizeRange } = layers[li];
+    const n = count + band + haze;
+    const positions = new Float32Array(n * 3);
+    const colors = new Float32Array(n * 3);
+    const sizes = new Float32Array(n);
+    const phases = new Float32Array(n);
+    const brights = new Float32Array(n);
+    const hazes = new Float32Array(n);
+    const rnd = mulberry32(77 + li * 31);
+    const tmp = new THREE.Color();
+
+    for (let i = 0; i < n; i++) {
+      const isBand = i >= count && i < count + band;
+      const isHaze = i >= count + band;
+
+      // --- Direction ------------------------------------------------------
+      // Sky-biased uniform sampling (cos φ on [-0.25, 1] keeps stars above
+      // the horizon plane). Band/haze stars additionally rejection-sample
+      // until they land within ~σ≈8° of the galactic great circle.
+      let ok = false;
+      for (let tries = 0; tries < 14 && !ok; tries++) {
+        const phi = Math.acos(rnd() * 1.25 - 0.25);
+        const theta = rnd() * Math.PI * 2;
+        dir.set(
+          Math.sin(phi) * Math.cos(theta),
+          Math.cos(phi),
+          Math.sin(phi) * Math.sin(theta)
+        );
+        if (!isBand && !isHaze) ok = true;
+        else {
+          const off = Math.abs(dir.angleTo(pole) - Math.PI / 2);
+          ok = rnd() < Math.exp(-(off * off) / 0.045);
+        }
+      }
+      if (!ok) {
+        // Rejection gave up (band runs nearly parallel to the folded
+        // horizon): project straight onto the great-circle plane.
+        dir.addScaledVector(pole, -dir.dot(pole));
+        if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
+        dir.normalize();
+      }
+      const rr = radius * (0.82 + rnd() * 0.3);
+      positions[i * 3] = dir.x * rr;
+      positions[i * 3 + 1] = Math.abs(dir.y) * rr * 0.82 + 90;
+      positions[i * 3 + 2] = dir.z * rr;
+
+      if (isHaze) {
+        // --- Milky Way haze blob -------------------------------------------
+        tmp.set('#8fa3d8').lerp(new THREE.Color('#b8c6ef'), rnd());
+        colors[i * 3] = tmp.r;
+        colors[i * 3 + 1] = tmp.g;
+        colors[i * 3 + 2] = tmp.b;
+        sizes[i] = 14 + rnd() * 16;
+        phases[i] = rnd() * 100;
+        brights[i] = 0.11 + rnd() * 0.08;
+        hazes[i] = 1;
+        continue;
+      }
+
+      // --- Magnitude: power-law — the realism keystone. Most stars are
+      //     barely-resolved pinpricks; band stars run a touch dimmer (the
+      //     unresolved distant host of the galaxy) but dense enough that
+      //     the great circle reads as a true star cloud, not just haze.
+      const b = isBand ? Math.pow(rnd(), 2.6) * 0.9 : Math.pow(rnd(), 2.7);
+
+      // --- Color ------------------------------------------------------------
+      let acc = rnd();
+      let hex = '#ffffff';
+      for (const [h, w] of STAR_MIX) {
+        acc -= w;
+        if (acc <= 0) {
+          hex = h;
+          break;
+        }
+      }
+      tmp.set(hex);
+      if (b < 0.35) tmp.lerp(gray, (0.35 - b) * 0.9); // faint stars gray out
+      colors[i * 3] = tmp.r;
+      colors[i * 3 + 1] = tmp.g;
+      colors[i * 3 + 2] = tmp.b;
+
+      sizes[i] = sizeBase + b * sizeRange * (0.6 + 0.4 * rnd());
+      phases[i] = rnd() * 100;
+      brights[i] = 0.16 + 0.84 * b;
+      hazes[i] = 0;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('acolor', new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute('asize', new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute('aphase', new THREE.BufferAttribute(phases, 1));
+    geo.setAttribute('abright', new THREE.BufferAttribute(brights, 1));
+    geo.setAttribute('ahaze', new THREE.BufferAttribute(hazes, 1));
+
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: STAR_VERT,
+      fragmentShader: STAR_FRAG,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: { value: 0 },
+        uDpr: {
+          value: Math.min(
+            typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+            2
+          ),
+        },
+      },
+    });
+    mats.push(mat);
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    points.push(pts);
+  }
+
+  let elapsed = 0;
+  return {
+    points,
+    update: (dt: number) => {
+      elapsed += dt;
+      for (const m of mats) m.uniforms.uTime.value = elapsed;
+    },
+    setDpr: (dpr: number) => {
+      for (const m of mats) m.uniforms.uDpr.value = Math.max(1, dpr);
+    },
+  };
+}
+
+/** A handful of bright cross-flare hero stars for depth cues. Kept compact
+ *  and subtle — real bright stars are still pinpoints with a small diffraction
+ *  cross; oversized flares bloom into fake "god ray" beams. */
 export function buildFlareStars(): THREE.Group {
   const group = new THREE.Group();
   const rnd = mulberry32(9091);
-  const tints = ['#ffffff', '#dcebff', '#ffeeda', '#cfe2ff'];
-  for (let i = 0; i < 10; i++) {
+  const tints = ['#ffffff', '#dcebff', '#ffeeda', '#cfe2ff', '#ffe3b8'];
+  for (let i = 0; i < 14; i++) {
     const s = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: flareTexture(),
         color: new THREE.Color(tints[Math.floor(rnd() * tints.length)]),
         transparent: true,
-        opacity: 0.5 + rnd() * 0.35,
+        opacity: 0.42 + rnd() * 0.38,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         fog: false,
@@ -626,7 +795,7 @@ export function buildFlareStars(): THREE.Group {
       rr * Math.sin(el) + 60,
       rr * Math.cos(el) * Math.cos(az)
     );
-    s.scale.setScalar(26 + rnd() * 40);
+    s.scale.setScalar(20 + rnd() * 26);
     group.add(s);
   }
   return group;
