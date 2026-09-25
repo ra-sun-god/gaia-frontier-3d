@@ -705,9 +705,16 @@ export class GameEngine {
     });
   }
 
-  /** Recompute the combat corridor half-width for the current field. */
+  /** Recompute the combat corridor half-width for the current field.
+   *  Aspect tiers MUST stay in lockstep with ThreeWorld.corridorWidth (lib/
+   *  three/world.ts): widescreen desktops get a wider corridor (880) so the
+   *  battlefield fills the monitor, tablets 720, phones keep the classic
+   *  640-capped band. Vertical descent timing is untouched — only the
+   *  horizontal spread widens with the screen. */
   private syncCorridor() {
-    this.corridorHalf = Math.min(this.L_WIDTH, 640) / 2;
+    const aspect = this.L_WIDTH / Math.max(1, this.L_HEIGHT);
+    const tier = aspect >= 1.35 ? 880 : aspect >= 0.8 ? 720 : 640;
+    this.corridorHalf = Math.min(this.L_WIDTH, tier) / 2;
   }
 
   /** Random x INSIDE the combat corridor (margin from each edge). */

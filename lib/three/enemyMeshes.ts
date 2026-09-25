@@ -514,26 +514,37 @@ export function buildGoodieMesh(g: Goodie): THREE.Group {
 
 export function buildProjectileMesh(p: Projectile): THREE.Group {
   const grp = new THREE.Group();
+  // DRAWN SIZE ONLY — the 2D engine owns collision/hit-tests in logical
+  // space, so inflating the meshes is strictly visual. Player feedback: at
+  // rig distance the old 1-unit slugs were sub-pixel; every munition now
+  // carries a hot core, a wide additive glow AND a tracer streak so shots
+  // read instantly at any range (see also THREAT_VIZ for hostiles).
   if (p.isGrenade) {
-    grp.add(new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), hullMat('#1f2937')));
-    grp.add(new THREE.Mesh(new THREE.SphereGeometry(0.3, 6, 6), emissiveMat('#fb923c', 3)));
+    grp.add(new THREE.Mesh(new THREE.SphereGeometry(2.3, 10, 8), hullMat('#1f2937')));
+    grp.add(new THREE.Mesh(new THREE.SphereGeometry(0.7, 6, 6), emissiveMat('#fb923c', 3)));
+    grp.add(glowSprite('#fb923c', 8, 0.7));
   } else if (p.weaponId === 'laser') {
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 1), emissiveMat(p.color, 3));
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.0, 1), emissiveMat(p.color, 3.4));
     beam.name = 'beam';
     grp.add(beam);
-    grp.add(glowSprite(p.color, 5, 0.7));
+    grp.add(glowSprite(p.color, 11, 0.75));
   } else if (p.weaponId === 'missiles') {
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.28, 2.4, 6), hullMat(p.color, 0.5));
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.65, 5.6, 6), hullMat(p.color, 0.5));
     body.rotation.x = Math.PI / 2;
     grp.add(body);
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.8, 6), hullMat('#e2e8f0'));
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.95, 1.9, 6), hullMat('#e2e8f0'));
     nose.rotation.x = Math.PI / 2;
-    nose.position.z = 1.5;
+    nose.position.z = 3.6;
     grp.add(nose);
-    grp.add(glowSprite('#fb923c', 4, 0.8));
+    // Engine flame + wide glow: missiles must read as bright torches
+    // streaking up the corridor.
+    const flame = glowSprite('#fb923c', 9, 0.85);
+    flame.position.z = -3.4;
+    grp.add(flame);
+    grp.add(glowSprite(p.color, 10, 0.6));
   } else if (p.isOrbital) {
     const beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(2.4, 4, 320, 10, 1, true),
+      new THREE.CylinderGeometry(3.4, 5.6, 320, 10, 1, true),
       new THREE.MeshBasicMaterial({
         color: new THREE.Color(p.color),
         transparent: true,
@@ -547,11 +558,19 @@ export function buildProjectileMesh(p: Projectile): THREE.Group {
     beam.name = 'orbitalBeam';
     grp.add(beam);
   } else if (p.isEmp) {
-    grp.add(new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 8), emissiveMat(p.color, 2.6)));
-    grp.add(glowSprite(p.color, 6, 0.8));
+    grp.add(new THREE.Mesh(new THREE.SphereGeometry(3.0, 10, 8), emissiveMat(p.color, 2.8)));
+    grp.add(glowSprite(p.color, 14, 0.85));
   } else {
-    grp.add(new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), emissiveMat(p.color, 2.4)));
-    grp.add(glowSprite(p.color, 4.4, 0.75));
+    // Standard slug / machinegun round: hot core + tracer streak + glow.
+    grp.add(new THREE.Mesh(new THREE.SphereGeometry(2.6, 10, 8), emissiveMat(p.color, 3)));
+    const tracer = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.18, 11, 6),
+      emissiveMat(p.color, 2.2)
+    );
+    tracer.rotation.x = Math.PI / 2;
+    tracer.position.z = -6.5; // trails behind the travel direction (+Z)
+    grp.add(tracer);
+    grp.add(glowSprite(p.color, 11, 0.8));
   }
   return grp;
 }

@@ -153,6 +153,17 @@ export class ThreeWorld {
   private aimLean = 0;
   private aimRise = 0;
 
+  // Desktop/large-screen presence: the rig pulls back to fit a wide logical
+  // field, and without compensation the hero cannon + shield dome shrink to
+  // props next to the (distance-boosted) hostiles. heroScale re-inflates the
+  // turret/citadel, domeScale the atmospheric shield — visual only.
+  private heroScale = 1;
+  private domeScale = 0.78;
+  /** Half-width of the engine's combat corridor, mirrored from
+   *  GameEngine.syncCorridor so camera framing + holo rails match the real
+   *  bounce walls on every aspect ratio. */
+  private corridorHalfW = 320;
+
   // Post pipeline
   private composer!: EffectComposer;
   private bloomPass!: UnrealBloomPass;
@@ -304,6 +315,9 @@ export class ThreeWorld {
     // Holographic defense-grid corridor — a faint vertical holo wall the
     // invaders descend through. Deliberately LOW contrast inside the action
     // band: the grid must never compete with hostile silhouettes.
+    // NOTE: no horizontal rungs — the altitude ladder read as static
+    // horizontal lines slicing the sky (player feedback), so the wall now
+    // carries only the vertical lanes, boundary rails and radar sweep.
     this.corridorMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -328,8 +342,8 @@ export class ThreeWorld {
         varying vec2 vUv;
         void main() {
           vec2 p = (vUv - 0.5) * uSize;
-          // altitude rungs (horizontal, every 64u) + faint vertical lanes
-          float rung = 1.0 - smoothstep(0.0, 0.05, abs(fract(p.y / 64.0) - 0.5));
+          // faint vertical lanes only (horizontal rungs removed — they read
+          // as static horizontal lines across the sky)
           float lane = 1.0 - smoothstep(0.0, 0.028, abs(fract(p.x / 56.0) - 0.5));
           // fade to nothing beyond the playfield rect
           vec2 q = abs(p) - uPlay * 0.5;
@@ -343,8 +357,8 @@ export class ThreeWorld {
           // melt into open sky at the top, into the planetary haze below
           float topFade = 1.0 - smoothstep(0.68, 0.97, vUv.y);
           float botFade = smoothstep(0.015, 0.16, vUv.y);
-          float a = fade * topFade * botFade * (0.10 + rung * 0.13 + lane * 0.045 + rail * 0.5 + band);
-          vec3 col = uTint * (0.20 + rung * 0.30 + lane * 0.10 + rail * 0.30) + vec3(0.8) * band;
+          float a = fade * topFade * botFade * (0.10 + lane * 0.045 + rail * 0.5 + band);
+          vec3 col = uTint * (0.20 + lane * 0.10 + rail * 0.30) + vec3(0.8) * band;
           gl_FragColor = vec4(col, a);
         }`,
     });
@@ -622,19 +636,44 @@ export class ThreeWorld {
    *  the sky, so the planet hangs beneath the defense line like a glowing
    *  shield, its atmosphere rim facing the action. All positions derive
    *  from the fitted camera, so portrait and landscape stay framed. */
+  /** Combat corridor full-width for the current logical field — MUST stay
+   *  in lockstep with GameEngine.syncCorridor (same aspect tiers) so the
+   *  camera framing, holo rails and the engine's bounce walls all agree.
+   *  Widescreen desktops get a wider corridor so the battlefield fills the
+   *  monitor instead of a phone-narrow strip. */
+  private corridorWidth(): number {
+    const aspect = this.LW / Math.max(1, this.LH);
+    const w = Math.min(this.LW, aspect >= 1.35 ? 880 : aspect >= 0.8 ? 720 : 640);
+    this.corridorHalfW = w / 2;
+    return w;
+  }
+
   private layoutFurniture() {
     const defY = this.wy(this.LH - 185); // defense line (cannon altitude)
+
+    // --- Aspect tiers: shared with GameEngine.syncCorridor -----------------
+    // The holo rails mark the TRUE bounce walls (they used to sit at ±LW/2,
+    // far outside where hostiles can actually fly — misleading on big
+    // screens).
+    const corridorW = this.corridorWidth();
+
+    // Hero presence: inflate the gun + citadel + dome on large screens so
+    // the defense battery reads as the star of the composition, not a toy
+    // under the (already distance-boosted) invaders.
+    const aspect = this.LW / Math.max(1, this.LH);
+    this.heroScale = aspect >= 1.35 ? 1.5 : aspect >= 0.8 ? 1.2 : 1.0;
+    this.domeScale = 0.78 * (aspect >= 1.35 ? 1.32 : aspect >= 0.8 ? 1.12 : 1.0);
 
     // Gaia citadel platform: floats just below the defense line, slightly
     // in front of the wall so the hero cannon reads as standing on its deck.
     this.platformGroup.position.set(0, defY - 34, PLATFORM_Z);
-    this.platformGroup.scale.setScalar(1.35);
+    this.platformGroup.scale.setScalar(1.35 * this.heroScale);
     this.shieldDome.position.set(0, defY - 26, PLATFORM_Z);
-    this.shieldDome.scale.setScalar(0.78);
+    this.shieldDome.scale.setScalar(this.domeScale);
     // Floodlight: keeps the cannon + citadel out of silhouette from the
-    // camera's low vantage point.
+    // camera's low vantage point (radius grows with the bigger hero rig).
     this.platformFlood.position.set(0, defY + 130, -80);
-    this.platformFlood.distance = 760;
+    this.platformFlood.distance = 760 * Math.max(1, this.heroScale * 0.9);
 
     // Vertical holo corridor centered on the gameplay wall.
     const w = this.LW * 1.5;
@@ -642,7 +681,9 @@ export class ThreeWorld {
     this.corridor.position.set(0, this.LH * 0.02, LANE_HOLO);
     this.corridor.scale.set(w, h, 1);
     this.corridorMat.uniforms.uSize.value.set(w, h);
-    this.corridorMat.uniforms.uPlay.value.set(this.LW, this.LH);
+    // uPlay.x = TRUE combat corridor width (engine's bounce walls), not the
+    // full logical field — the rails must mark where hostiles actually fly.
+    this.corridorMat.uniforms.uPlay.value.set(corridorW, this.LH);
 
     // --- Earth framing ------------------------------------------------------
     // Solve the sphere so its silhouette (limb) appears at a fixed fraction
@@ -683,6 +724,8 @@ export class ThreeWorld {
     this.camera.aspect = aspect;
     this.camera.fov = aspect < 0.8 ? 52 : aspect < 1.35 ? 48 : 46;
     this.camera.updateProjectionMatrix();
+    // Refresh the corridor mirror FIRST so probes use the current field.
+    this.corridorWidth();
     // Upward tilt of the rig: steeper on portrait (tall corridor), gentler
     // on widescreen so the horizon keeps some presence.
     const tiltDeg = aspect < 0.8 ? 27 : aspect < 1.35 ? 21 : 16;
@@ -692,7 +735,10 @@ export class ThreeWorld {
 
     this.camTarget.set(0, this.LH * 0.05, 0);
     const defY = this.wy(this.LH - 185);
-    const hw = Math.min(this.LW / 2, 380);
+    // Probe the TRUE combat corridor (mirrors GameEngine.syncCorridor) plus
+    // a margin — wings beyond the bounce walls are dead space and must not
+    // pull the rig back on ultrawide monitors.
+    const hw = Math.min(this.LW / 2, this.corridorHalfW + 60);
     const probes = [
       // deep top corners — spawn band sits ~170u into the sky
       new THREE.Vector3(-hw, this.wy(-60), -170),
@@ -916,6 +962,10 @@ export class ThreeWorld {
     }
     const defY = this.wy(state.cannonY);
     this.turretGroup.position.set(this.wx(state.cannonX), defY + 6, DEFENSE_Z);
+    // Hero presence (desktop/large screens): buildTurret authors at 1.25;
+    // heroScale re-inflates the whole emplacement so the gun holds its own
+    // against the distance-boosted hostiles on wide monitors.
+    this.turretGroup.scale.setScalar(1.25 * this.heroScale);
     if (this.turretHead && this.turretBarrel) {
       const a = state.aimAngle; // [-0.91π, -0.09π] — upper hemisphere
       // Yaw: heading around the vertical; atan2(x, small ε) keeps the slew
@@ -1596,6 +1646,7 @@ export class ThreeWorld {
       // sweeping the horizon while the camera drifts past it.
       if (this.turretGroup && this.turretHead && this.turretBarrel) {
         this.turretGroup.position.set(0, this.wy(this.LH - 185) + 6, DEFENSE_Z);
+        this.turretGroup.scale.setScalar(1.25 * this.heroScale);
         this.turretHead.rotation.y = Math.sin(t * 0.22) * 0.65;
         this.turretBarrel.rotation.x = -0.62 + Math.sin(t * 0.13) * 0.1;
       }

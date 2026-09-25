@@ -146,11 +146,11 @@ export const HUD: React.FC<HUDProps> = ({
                   : 'bg-gradient-to-r from-cyan-600 via-sky-600 to-blue-700 border-cyan-300'
             }`}
           >
-            <span className="text-[11px] font-black text-white uppercase tracking-wider drop-shadow">
+            <span className="text-[11px] lg:text-[13px] font-black text-white uppercase tracking-wider drop-shadow">
               {mode === 'bossRush' ? `STG ${currentWave}` : `W${currentWave}`}
             </span>
             <span
-              className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-white/60 ${
+              className={`text-[9px] lg:text-[11px] font-bold px-1.5 py-0.5 rounded-full border border-white/60 ${
                 mode === 'bossRush'
                   ? 'text-rose-950 bg-rose-200'
                   : mode === 'endless'
@@ -163,10 +163,10 @@ export const HUD: React.FC<HUDProps> = ({
           </div>
 
           {/* Earth Planetary Defense Hull Bar */}
-          <div className="flex-1 min-w-0 max-w-[130px] bg-[#071938]/90 border-2 border-cyan-400/50 rounded-full px-2 py-0.5 flex items-center gap-1.5 shadow-md">
-            <span className="text-[11px] shrink-0">🌍</span>
+          <div className="flex-1 min-w-0 max-w-[130px] lg:max-w-[220px] bg-[#071938]/90 border-2 border-cyan-400/50 rounded-full px-2 py-0.5 flex items-center gap-1.5 shadow-md">
+            <span className="text-[11px] lg:text-[13px] shrink-0">🌍</span>
             <div className="flex-1 min-w-0 flex flex-col justify-center">
-              <div className="flex items-center justify-between text-[8px] font-black text-white leading-none mb-0.5">
+              <div className="flex items-center justify-between text-[8px] lg:text-[10px] font-black text-white leading-none mb-0.5">
                 <span className="text-cyan-200">HULL</span>
                 {/* Raw hull % — with reinforcement steps this honestly reads
                     125% / 150% / 175% (the purchased ceiling), exactly as the
@@ -213,9 +213,9 @@ export const HUD: React.FC<HUDProps> = ({
                 onTogglePause();
               }}
               title="Pause Game"
-              className="w-7 h-7 btn-game-squircle flex items-center justify-center text-white active:scale-90 select-none shadow-md cursor-pointer"
+              className="w-7 h-7 lg:w-9 lg:h-9 btn-game-squircle flex items-center justify-center text-white active:scale-90 select-none shadow-md cursor-pointer"
             >
-              <Pause className="w-3 h-3 fill-white text-white drop-shadow" />
+              <Pause className="w-3 h-3 lg:w-4 lg:h-4 fill-white text-white drop-shadow" />
             </button>
           </div>
         </div>
@@ -225,7 +225,7 @@ export const HUD: React.FC<HUDProps> = ({
           {/* Adrenaline Rush / Overdrive Surge Meter (compact pill, not full width).
               Wrapped in a non-overflowing relative div so the Combat Response
               Protocol badge can perch above the pill without being clipped. */}
-          <div className="relative w-[38%] max-w-[170px] shrink-0">
+          <div className="relative w-[38%] max-w-[170px] lg:max-w-[280px] shrink-0">
             <div
               id="hud-adrenaline-bar"
               onClick={() => {
@@ -286,7 +286,7 @@ export const HUD: React.FC<HUDProps> = ({
               }}
               disabled={cash < ADRENALINE_STIM_COST}
               title={`Adrenaline Stim +50 ($${ADRENALINE_STIM_COST})`}
-              className={`shrink-0 flex items-center gap-0.5 px-1.5 h-3 rounded-full border text-[7px] font-black whitespace-nowrap transition cursor-pointer active:scale-95 ${
+              className={`shrink-0 flex items-center gap-0.5 px-1.5 h-3 lg:h-4 lg:px-2.5 rounded-full border text-[7px] lg:text-[10px] font-black whitespace-nowrap transition cursor-pointer active:scale-95 ${
                 cash >= ADRENALINE_STIM_COST
                   ? 'bg-[#071938]/90 border-rose-400/60 text-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.35)]'
                   : 'bg-[#071938]/60 border-slate-600/60 text-slate-500 cursor-not-allowed'
@@ -300,12 +300,12 @@ export const HUD: React.FC<HUDProps> = ({
           {/* Combo Streak / Score badge */}
           {comboStreak >= 3 ? (
             <div className="flex items-center gap-1 bg-gradient-to-r from-amber-500 to-yellow-500 text-amber-950 font-black px-2 py-0.5 rounded-full shadow-md border border-yellow-200 animate-bounce whitespace-nowrap">
-              <Flame className="w-2.5 h-2.5 text-amber-950 fill-amber-950" />
-              <span className="text-[9px]">{comboStreak}x COMBO ({comboMultiplier}x)</span>
+              <Flame className="w-2.5 h-2.5 lg:w-3.5 lg:h-3.5 text-amber-950 fill-amber-950" />
+              <span className="text-[9px] lg:text-[12px]">{comboStreak}x COMBO ({comboMultiplier}x)</span>
             </div>
           ) : (
             <div className="bg-[#071938]/90 border border-cyan-400/40 px-2 py-0.5 rounded-full text-cyan-200 font-bold whitespace-nowrap">
-              <span className="text-[9px]">
+              <span className="text-[9px] lg:text-[12px]">
                 Score: <strong className="text-white">{score.toLocaleString()}</strong>
               </span>
             </div>
@@ -321,18 +321,18 @@ export const HUD: React.FC<HUDProps> = ({
         {activeBoss && (
           <div
             id="hud-boss-bar-card"
-            className="w-[38%] max-w-[170px] h-3 flex items-center gap-1 bg-[#051126]/95 border border-rose-500/80 rounded-full pl-1 pr-1.5 shadow-[0_0_14px_rgba(244,63,94,0.45)] backdrop-blur-md pointer-events-none select-none animate-in fade-in"
+            className="w-[38%] max-w-[170px] lg:w-[46%] lg:max-w-[320px] h-3 lg:h-4 flex items-center gap-1 bg-[#051126]/95 border border-rose-500/80 rounded-full pl-1 pr-1.5 shadow-[0_0_14px_rgba(244,63,94,0.45)] backdrop-blur-md pointer-events-none select-none animate-in fade-in"
           >
-            <span className="text-[8px] leading-none shrink-0 animate-pulse" title="Hostile flagship">
+            <span className="text-[8px] lg:text-[11px] leading-none shrink-0 animate-pulse" title="Hostile flagship">
               {activeBoss.alienPilot ? '👽' : '💀'}
             </span>
 
-            <span className="text-[7px] font-black text-rose-300 uppercase tracking-wide truncate max-w-[50px] shrink-0 leading-none">
+            <span className="text-[7px] lg:text-[10px] font-black text-rose-300 uppercase tracking-wide truncate max-w-[50px] lg:max-w-[110px] shrink-0 leading-none">
               {activeBoss.alienPilot?.name || activeBoss.name}
             </span>
 
             {(activeBoss.bossPhase ?? 1) >= 3 && (
-              <span className="text-[6px] font-black px-0.5 py-px rounded-full bg-rose-600 text-white uppercase animate-pulse border border-rose-300 shrink-0 leading-none">
+              <span className="text-[6px] lg:text-[8px] font-black px-0.5 py-px rounded-full bg-rose-600 text-white uppercase animate-pulse border border-rose-300 shrink-0 leading-none">
                 P3
               </span>
             )}
@@ -359,7 +359,7 @@ export const HUD: React.FC<HUDProps> = ({
               )}
             </div>
 
-            <span className="text-[7px] font-black text-rose-200 tabular-nums shrink-0 leading-none">
+            <span className="text-[7px] lg:text-[10px] font-black text-rose-200 tabular-nums shrink-0 leading-none">
               {Math.max(0, Math.round((activeBoss.hp / activeBoss.maxHp) * 100))}%
             </span>
           </div>
@@ -413,7 +413,7 @@ export const HUD: React.FC<HUDProps> = ({
       {/* ========================================================================= */}
       {/* BOTTOM WEAPON & SPECIALS DOCK (Tactile Mobile Gaming Controls)             */}
       {/* ========================================================================= */}
-      <div className="pointer-events-auto w-full max-w-[460px] mx-auto">
+      <div className="pointer-events-auto w-full max-w-[460px] lg:max-w-[680px] mx-auto">
         <div className="bg-[#14182E]/95 border-[2.5px] border-[#2B3566] rounded-3xl p-2 shadow-[0_10px_25px_rgba(0,0,0,0.7)] flex items-center justify-between gap-1.5 backdrop-blur-md">
           {/* Primary 4 Weapons */}
           <div className="grid grid-cols-4 gap-1.5 flex-1">
@@ -462,7 +462,7 @@ export const HUD: React.FC<HUDProps> = ({
                     triggerHaptic(15);
                     onSwitchWeapon(id);
                   }}
-                  className={`relative flex flex-col items-center justify-center py-1 px-1 rounded-2xl transition-all select-none min-h-[48px] cursor-pointer ${
+                  className={`relative flex flex-col items-center justify-center py-1 px-1 rounded-2xl transition-all select-none min-h-[48px] lg:min-h-[60px] lg:py-1.5 cursor-pointer ${
                     isSelected
                       ? 'bg-gradient-to-b from-[#00D2FF] to-[#0A58CA] border-[2.5px] border-[#FAC602] shadow-[0_0_12px_rgba(0,210,255,0.7),0_3px_0_#06367D] scale-105'
                       : isUnlocked
@@ -470,12 +470,12 @@ export const HUD: React.FC<HUDProps> = ({
                       : 'bg-slate-900/60 border border-slate-800 text-slate-600 cursor-not-allowed opacity-40'
                   }`}
                 >
-                  <span className="text-base leading-none mb-0.5">{getWeaponIcon(id)}</span>
-                  <span className="text-[9px] font-black tracking-tight text-white leading-tight">
+                  <span className="text-base lg:text-xl leading-none mb-0.5">{getWeaponIcon(id)}</span>
+                  <span className="text-[9px] lg:text-[12px] font-black tracking-tight text-white leading-tight">
                     {getWeaponName(id)}
                   </span>
                   {isUnlocked && (
-                    <span className="text-[8px] font-black text-[#FAC602] bg-[#0A0E21] px-1 rounded mt-0.5 border border-[#FAC602]/30">
+                    <span className="text-[8px] lg:text-[10px] font-black text-[#FAC602] bg-[#0A0E21] px-1 rounded mt-0.5 border border-[#FAC602]/30">
                       Mk{w.tier}
                     </span>
                   )}
@@ -500,7 +500,7 @@ export const HUD: React.FC<HUDProps> = ({
                 onToggleAutoFire();
               }}
               title="Auto-Fire Radar"
-              className={`flex flex-col items-center justify-center w-11 h-12 rounded-2xl border text-[8px] font-black transition-all cursor-pointer ${
+              className={`flex flex-col items-center justify-center w-11 h-12 lg:w-14 lg:h-14 rounded-2xl border text-[8px] lg:text-[10px] font-black transition-all cursor-pointer ${
                 autoFireEnabled
                   ? 'bg-[#53CE17] border-[#226804] text-white shadow-[0_2px_0_#2B7F04]'
                   : 'bg-[#1C2344] border-[#2B3566] text-slate-300'
@@ -529,7 +529,7 @@ export const HUD: React.FC<HUDProps> = ({
                   ? `EMP Shockwave — ${empCharges} charge${empCharges === 1 ? '' : 's'} left. Strips ALL enemy shields + stuns the whole field`
                   : `Buy 1 EMP charge — $${SPECIAL_CHARGE_COSTS.emp}`
               }
-              className={`relative flex flex-col items-center justify-center w-11 h-12 rounded-2xl border font-black transition-all cursor-pointer ${
+              className={`relative flex flex-col items-center justify-center w-11 h-12 lg:w-14 lg:h-14 rounded-2xl border font-black transition-all cursor-pointer ${
                 !weapons.emp.unlocked
                   ? 'bg-slate-900/70 border-slate-800 text-slate-500 opacity-60'
                   : empCharges > 0
@@ -578,7 +578,7 @@ export const HUD: React.FC<HUDProps> = ({
                   ? `Orbital Laser Strike — ${orbitalCharges} charge${orbitalCharges === 1 ? '' : 's'} left. Giant beam wipes the battlefield`
                   : `Buy 1 Orbital charge — $${SPECIAL_CHARGE_COSTS.orbital}`
               }
-              className={`relative flex flex-col items-center justify-center w-11 h-12 rounded-2xl border font-black transition-all cursor-pointer ${
+              className={`relative flex flex-col items-center justify-center w-11 h-12 lg:w-14 lg:h-14 rounded-2xl border font-black transition-all cursor-pointer ${
                 !weapons.orbital.unlocked
                   ? 'bg-slate-900/70 border-slate-800 text-slate-500 opacity-60'
                   : orbitalCharges > 0
@@ -625,7 +625,7 @@ export const HUD: React.FC<HUDProps> = ({
                   ? `Frag Grenade — ${grenadeCharges} left. Lobs a grenade to your aim point; explodes for big AoE damage in a wide blast radius (also vaporizes starfall shards)`
                   : `Buy 1 Frag Grenade — $${SPECIAL_CHARGE_COSTS.grenade}. Lobs to your aim point, big AoE blast`
               }
-              className={`relative flex flex-col items-center justify-center w-11 h-12 rounded-2xl border font-black transition-all cursor-pointer ${
+              className={`relative flex flex-col items-center justify-center w-11 h-12 lg:w-14 lg:h-14 rounded-2xl border font-black transition-all cursor-pointer ${
                 grenadeCharges > 0
                   ? grenadeCooldown <= 0
                     ? 'bg-gradient-to-b from-[#FAC602] to-[#B8860B] border-[#FAC602] text-white shadow-[0_2px_0_#8B6914] active:translate-y-0.5'
