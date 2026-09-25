@@ -2815,9 +2815,11 @@ export class GameEngine {
           });
         }
       } else if (t.isBoss) {
-        // Upper orbital sector cruise
-        if (t.y < 155) {
-          t.vy = 18;
+        // Upper orbital sector cruise — holds a HIGH standoff orbit (125,
+        // was 155): deeper in the sky, farther from the camera, so the
+        // flagship commands the battlefield without filling the frame.
+        if (t.y < 125) {
+          t.vy = 22;
         } else {
           t.vy = Math.sin(timeSec * 2.5) * 6;
         }
@@ -4235,7 +4237,10 @@ export class GameEngine {
     }
 
     const x = this.corridorX(35);
-    const threat = this.createSpecificThreat(type, x, -30);
+    // DEEP-SPACE ENTRY: spawn 70u above the field (was 30) — invaders
+    // crest the top of the sky small and distant, then bear down on the
+    // battery. Desktop feedback: enemies used to materialize "too close".
+    const threat = this.createSpecificThreat(type, x, -70);
 
     // ELITE champion roll — rare golden variants (jackpot spawns). ELITE
     // HUNT mutator waves crank the odds way up.
@@ -4404,7 +4409,11 @@ export class GameEngine {
 
   private spawnBoss(isEraBoss: boolean) {
     const x = this.L_WIDTH / 2;
-    const y = -60;
+    // DEEP-SPACE ENTRY: flagships warp in 110u above the field (was 60) —
+    // they spend their entrance run small and far, then descend to a HIGH
+    // standoff orbit (see the hold-altitude logic in the update loop), so
+    // they read as commanding the sky instead of looming in your face.
+    const y = -110;
 
     // Wave ramp × arsenal-response: flagship armor is explicitly tuned
     // against the player's best-gun DPS, so a maxed cannon can never melt
@@ -4437,7 +4446,7 @@ export class GameEngine {
       x,
       y,
       vx: 36,
-      vy: 18,
+      vy: 22,
       radius: isEraBoss ? cfg.radius : 32,
       hp: maxHp,
       maxHp,

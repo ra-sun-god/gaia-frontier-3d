@@ -46,21 +46,23 @@ const MAX_PARTICLES = 520;
 const MAX_COMETS = 24;
 
 /** Visual presence multiplier for hostiles: threat meshes are authored at
- *  1 world unit per logical radius, which reads tiny at rig distance. This
- *  blows the DRAWN size up only — the 2D engine's collision & hit tests
- *  stay logical, so gameplay difficulty is completely untouched. */
-const THREAT_VIZ = 1.42;
+ *  1 world unit per logical radius. Kept near unity — desktop player
+ *  feedback was that enemies, obstacles AND bosses read far TOO large and
+ *  TOO close (previous 1.42 + up to +85% far-spawn boost ≈ 2.6× authored
+ *  size). The 2D engine's collision & hit tests stay logical, so gameplay
+ *  difficulty is completely untouched. */
+const THREAT_VIZ = 1.05;
 
 /** LOCAL scale for the per-threat detection halo sprite. The halo lives
  *  INSIDE the scaled threat group, so the parent already applies
  *  radius·THREAT_VIZ·boost — multiplying by radius/boost again (the old
  *  quadratic form) blew single halos up to thousands of world units: a
  *  sky-drowning orange wash that hid the starfield and flattened enemy
- *  contrast. Keep it a constant; world halo ≈ 4.6× the body. */
-const HALO_LOCAL = 4.6;
+ *  contrast. Keep it a constant; world halo ≈ 4.2× the body. */
+const HALO_LOCAL = 4.2;
 
 /** Absolute WORLD-size cap for the detection halo (flagships included). */
-const HALO_WORLD_CAP = 150;
+const HALO_WORLD_CAP = 130;
 /** Other glow sprites (boss aura, engine flames, misc): never wider than
  *  GLOW_BODY_FACTOR× the drawn body, and their size²·opacity “energy” is
  *  bounded — bright glows get proportionally tighter. Era flagships run
@@ -314,10 +316,11 @@ export class ThreeWorld {
 
     // Holographic defense-grid corridor — a faint vertical holo wall the
     // invaders descend through. Deliberately LOW contrast inside the action
-    // band: the grid must never compete with hostile silhouettes.
-    // NOTE: no horizontal rungs — the altitude ladder read as static
-    // horizontal lines slicing the sky (player feedback), so the wall now
-    // carries only the vertical lanes, boundary rails and radar sweep.
+    // band: the wall must never compete with hostile silhouettes.
+    // NOTE: line-free sky — the horizontal altitude rungs AND the vertical
+    // lanes + boundary rails all read as static lines slicing the sky
+    // (player feedback, twice), so the wall now carries ONLY a soft corridor
+    // glow with the climbing radar sweep. No stripes, no rails, no lines.
     this.corridorMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -342,23 +345,19 @@ export class ThreeWorld {
         varying vec2 vUv;
         void main() {
           vec2 p = (vUv - 0.5) * uSize;
-          // faint vertical lanes only (horizontal rungs removed — they read
-          // as static horizontal lines across the sky)
-          float lane = 1.0 - smoothstep(0.0, 0.028, abs(fract(p.x / 56.0) - 0.5));
-          // fade to nothing beyond the playfield rect
+          // fade to nothing beyond the playfield rect (soft glow only —
+          // vertical lanes and boundary rails were removed with the
+          // horizontal rungs: every stripe read as a static line in the sky)
           vec2 q = abs(p) - uPlay * 0.5;
           float fade = 1.0 - smoothstep(0.0, uPlay.x * 0.42, max(q.x, q.y));
-          // corridor boundary rails at the playfield side edges (the
-          // bounce walls — real gameplay information, worth the brightness)
-          float rail = smoothstep(42.0, 4.0, abs(abs(p.x) - uPlay.x * 0.5)) * 0.55;
           // radar sweep climbing from the defense line into the sky
           float sp = fract(uTime * 0.085);
           float band = exp(-pow((vUv.y - (0.10 + sp * 0.86)) * 11.0, 2.0)) * 0.16;
           // melt into open sky at the top, into the planetary haze below
           float topFade = 1.0 - smoothstep(0.68, 0.97, vUv.y);
           float botFade = smoothstep(0.015, 0.16, vUv.y);
-          float a = fade * topFade * botFade * (0.10 + lane * 0.045 + rail * 0.5 + band);
-          vec3 col = uTint * (0.20 + lane * 0.10 + rail * 0.30) + vec3(0.8) * band;
+          float a = fade * topFade * botFade * (0.10 + band);
+          vec3 col = uTint * 0.20 + vec3(0.8) * band;
           gl_FragColor = vec4(col, a);
         }`,
     });
@@ -805,7 +804,7 @@ export class ThreeWorld {
   private vizRadius(t: { x: number; y: number; radius: number }): number {
     const zT = this.depthOf(t.y) + LANE_THREAT;
     const dCam = this.tmpV.set(this.wx(t.x), this.wy(t.y), zT).distanceTo(this.camera.position);
-    const boost = 1 + clamp((dCam - 560) / 1500, 0, 0.85);
+    const boost = 1 + clamp((dCam - 640) / 1500, 0, 0.35);
     return t.radius * THREAT_VIZ * boost;
   }
 
@@ -1050,13 +1049,15 @@ export class ThreeWorld {
         mesh.visible = Math.sin(timeSec * 22 + t.id * 1.7) > -0.35;
       }
       const hurtPulse = t.lastDamagedAt !== undefined && timeSec - t.lastDamagedAt < 0.12;
-      // Distance size compensation, strengthened: perspective shrinks
-      // high-altitude spawns hard — pad them up to +85% (was +55%) so
-      // distant intercepts stay comfortably visible and clickable.
+      // Distance size compensation, TAMED: the old +85% pad made distant
+      // spawns read huge and in-your-face (desktop feedback: enemies "too
+      // large and too close"). Now only the deepest spawn band gets a mild
+      // +35% nudge — just enough to keep far intercepts visible, while the
+      // invaders visibly GROW as they descend toward the defense line.
       const dCam = mesh.position.distanceTo(this.camera.position);
-      const boost = 1 + clamp((dCam - 560) / 1500, 0, 0.85);
-      // THREAT_VIZ adds a global visual presence blowup (gameplay-neutral,
-      // see its doc comment) — hostiles finally read CLOSE.
+      const boost = 1 + clamp((dCam - 640) / 1500, 0, 0.35);
+      // THREAT_VIZ keeps a light global presence nudge (gameplay-neutral,
+      // see its doc comment) — hostiles stay readable without looming.
       mesh.scale.setScalar(t.radius * THREAT_VIZ * boost * (hurtPulse ? 1.12 : 1));
       const halo = mesh.userData.halo as THREE.Sprite | undefined;
       if (halo) {
